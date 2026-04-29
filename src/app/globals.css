@@ -1,26 +1,253 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #07111f;
+  --foreground: #f8fafc;
+  --panel: rgba(15, 23, 42, 0.72);
+  --panel-strong: rgba(30, 41, 59, 0.84);
+  --line: rgba(148, 163, 184, 0.24);
+  --muted: #cbd5e1;
+  --beer: #38bdf8;
+  --amber: #fb7185;
+  --mint: #34d399;
+  --ink: #07111f;
+  --chart-grid: rgba(148, 163, 184, 0.28);
+  --chart-text: #e2e8f0;
+  --heat-rgb: 56, 189, 248;
+  --tooltip-bg: #0f172a;
+  --tooltip-border: rgba(148, 163, 184, 0.32);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(56, 189, 248, 0.34);
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(14px, -18px, 0) rotate(2deg);
+  }
+}
+
+.app-shell {
+  min-height: 100vh;
+  color: var(--foreground);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.2), transparent 31rem),
+    radial-gradient(circle at 88% 14%, rgba(52, 211, 153, 0.14), transparent 28rem),
+    radial-gradient(circle at 52% 100%, rgba(251, 113, 133, 0.1), transparent 32rem),
+    linear-gradient(135deg, #07111f 0%, #0f172a 52%, #172033 100%);
+  position: relative;
+  overflow-x: hidden;
+}
+
+.app-shell[data-theme="light"] {
+  --foreground: #172033;
+  --panel: rgba(255, 255, 255, 0.86);
+  --panel-strong: rgba(255, 255, 255, 0.96);
+  --line: rgba(51, 65, 85, 0.17);
+  --muted: #475569;
+  --beer: #2563eb;
+  --amber: #e11d48;
+  --mint: #0f766e;
+  --ink: #172033;
+  --chart-grid: rgba(51, 65, 85, 0.2);
+  --chart-text: #1e293b;
+  --heat-rgb: 37, 99, 235;
+  --tooltip-bg: #ffffff;
+  --tooltip-border: rgba(51, 65, 85, 0.18);
+  color: var(--foreground);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(37, 99, 235, 0.18), transparent 31rem),
+    radial-gradient(circle at 88% 14%, rgba(15, 118, 110, 0.12), transparent 28rem),
+    radial-gradient(circle at 50% 100%, rgba(225, 29, 72, 0.1), transparent 30rem),
+    linear-gradient(135deg, #f8fafc 0%, #eef2ff 54%, #ecfeff 100%);
+}
+
+.app-shell::before {
+  content: "";
+  position: fixed;
+  inset: auto -8rem -12rem auto;
+  width: 30rem;
+  height: 30rem;
+  border-radius: 999px;
+  background: rgba(251, 113, 133, 0.16);
+  filter: blur(14px);
+  animation: drift 12s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.app-shell[data-theme="light"]::before {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.hero-band {
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(148, 163, 184, 0.14), rgba(148, 163, 184, 0.03)),
+    rgba(7, 17, 31, 0.78);
+  backdrop-filter: blur(18px);
+}
+
+.app-shell[data-theme="light"] .hero-band {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.26)),
+    rgba(248, 250, 252, 0.72);
+}
+
+.glass-panel,
+.panel-card,
+.metric-card {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(16px);
+}
+
+.panel-card,
+.metric-card,
+.glass-panel {
+  border-radius: 18px;
+}
+
+.panel-card,
+.metric-card,
+.award-card,
+.fade-up {
+  animation: fade-up 0.55s ease both;
+}
+
+.panel-card,
+.metric-card,
+.award-card {
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.panel-card:hover,
+.metric-card:hover,
+.award-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--beer) 45%, transparent);
+  background: var(--panel-strong);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+}
+
+.field {
+  border: 1px solid var(--line);
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--foreground);
+}
+
+.app-shell[data-theme="light"] .field {
+  background: rgba(255, 255, 255, 0.74);
+  color: #172033;
+  border-color: rgba(51, 65, 85, 0.22);
+}
+
+.primary-action {
+  background: var(--beer);
+  color: white;
+}
+
+.primary-action:hover {
+  filter: brightness(1.08);
+}
+
+.theme-text {
+  color: var(--foreground);
+}
+
+.theme-muted {
+  color: var(--muted);
+}
+
+.theme-accent {
+  color: var(--beer);
+}
+
+.field option {
+  color: var(--ink);
+}
+
+.award-card .award-reason {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition:
+    max-height 220ms ease,
+    opacity 220ms ease,
+    margin-top 220ms ease;
+}
+
+.award-card:hover .award-reason,
+.award-card:focus-within .award-reason {
+  max-height: 8rem;
+  margin-top: 0.75rem;
+  opacity: 1;
+}
+
+.chart-label {
+  fill: var(--chart-text);
+  font-size: 12px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: var(--tooltip-bg);
+  stroke-width: 3px;
+}
+
+.recharts-cartesian-axis-tick-value {
+  fill: var(--chart-text);
+}
+
+.recharts-default-tooltip {
+  background: var(--tooltip-bg) !important;
+  border-color: var(--tooltip-border) !important;
+  color: var(--foreground) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25) !important;
+}
+
+@media (max-width: 640px) {
+  .panel-card,
+  .metric-card,
+  .glass-panel {
+    border-radius: 14px;
+  }
 }
