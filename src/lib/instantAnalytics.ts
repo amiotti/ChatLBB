@@ -142,14 +142,28 @@ export async function saveExcelUploadChunk(
   payload: string,
 ) {
   const db = getInstantDb();
-
-  await db.transact(
-    db.tx.excelUploadChunks[`${uploadId}-${index}`].update({
+  const existing = await db.query({
+    excelUploadChunks: {
+      $: {
+        where: {
+          uploadId,
+        },
+      },
+    },
+  });
+  const duplicateChunks = (existing.excelUploadChunks ?? []).filter(
+    (chunk) => Number(chunk.index) === index,
+  );
+  const txs = [
+    ...duplicateChunks.map((chunk) => db.tx.excelUploadChunks[chunk.id].delete()),
+    db.tx.excelUploadChunks[id()].update({
       uploadId,
       index,
       payload,
     }),
-  );
+  ];
+
+  await db.transact(txs);
 }
 
 export async function loadExcelUploadBuffer(uploadId: string) {
