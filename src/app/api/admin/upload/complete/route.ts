@@ -11,22 +11,27 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
-  if (!(await isAdminRequest())) {
-    return NextResponse.json({ ok: false, error: "No autorizado" }, { status: 401 });
-  }
-
-  const body = await request.json();
-  const uploadId = String(body.uploadId ?? "");
-
-  if (!uploadId) {
-    return NextResponse.json(
-      { ok: false, error: "Falta uploadId" },
-      { status: 400 },
-    );
-  }
-
   try {
+    if (!(await isAdminRequest())) {
+      return NextResponse.json({ ok: false, error: "No autorizado" }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const uploadId = String(body.uploadId ?? "");
+
+    if (!uploadId) {
+      return NextResponse.json(
+        { ok: false, error: "Falta uploadId" },
+        { status: 400 },
+      );
+    }
+
+    console.log("[admin/upload/complete] loading upload", { uploadId });
     const { fileName, buffer } = await loadExcelUploadBuffer(uploadId);
+    console.log("[admin/upload/complete] building analytics", {
+      fileName,
+      bytes: buffer.length,
+    });
     const analytics = buildAnalyticsFromExcelBuffer(buffer, fileName);
     const nextAnalytics = {
       ...analytics,
@@ -34,6 +39,9 @@ export async function POST(request: Request) {
       sourceName: fileName,
     };
 
+    console.log("[admin/upload/complete] saving analytics", {
+      totalMessages: analytics.totalMessages,
+    });
     await saveAnalyticsToDb(nextAnalytics);
     await markExcelUploadAsCurrent(uploadId);
 

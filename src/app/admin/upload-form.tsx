@@ -9,7 +9,7 @@ type UploadFormProps = {
   totalMessages: number;
 };
 
-const CHUNK_BYTES = 700_000;
+const CHUNK_BYTES = 180_000;
 
 export function UploadForm({
   currentSource,
@@ -166,7 +166,21 @@ async function postJson(url: string, body: unknown) {
     },
     body: JSON.stringify(body),
   });
-  const payload = await response.json();
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+  let payload: { ok?: boolean; error?: string; [key: string]: unknown } = {};
+
+  if (contentType.includes("application/json") && text) {
+    payload = JSON.parse(text);
+  } else if (!response.ok) {
+    const preview = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
+    throw new Error(
+      `La API devolvió ${response.status} ${response.statusText}. ${
+        preview ? preview.slice(0, 180) : "No hubo detalle del servidor."
+      }`,
+    );
+  }
 
   if (!response.ok || !payload.ok) {
     throw new Error(payload.error ?? "No se pudo completar la operación.");
