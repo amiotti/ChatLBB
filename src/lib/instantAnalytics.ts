@@ -8,12 +8,17 @@ const APP_ID =
   "6d3ebf4b-4c9b-43e7-a54a-4615b71140de";
 const SNAPSHOT_KEY = "chat-lbb-current";
 const CHUNK_SIZE = 250_000;
+const TRANSACT_BATCH_SIZE = 80;
 
 type InstantDb = ReturnType<typeof init>;
 
 let instantDb: InstantDb | null = null;
 
 function getInstantDb() {
+  if (!process.env.INSTANT_APP_ADMIN_TOKEN) {
+    throw new Error("Falta INSTANT_APP_ADMIN_TOKEN en las variables de entorno.");
+  }
+
   if (!instantDb) {
     instantDb = init({
       appId: APP_ID,
@@ -63,10 +68,6 @@ export async function loadAnalyticsFromDb() {
 }
 
 export async function saveAnalyticsToDb(analytics: ChatAnalytics) {
-  if (!process.env.INSTANT_APP_ADMIN_TOKEN) {
-    throw new Error("Falta INSTANT_APP_ADMIN_TOKEN en .env.local");
-  }
-
   const db = getInstantDb();
   const json = JSON.stringify(analytics);
   const encoded = Buffer.from(deflate(json)).toString("base64");
@@ -111,5 +112,147 @@ export async function saveAnalyticsToDb(analytics: ChatAnalytics) {
     ),
   ];
 
+  await transactInBatches(db, txs);
+}
+
+export async function initExcelUpload(fileName: string, size: number) {
+  const db = getInstantDb();
+  const uploadId = id();
+
+  await db.transact(
+    db.tx.excelUploads[uploadId].update({
+      fileName,
+      size,
+      status: "uploading",
+      createdAt: new Date().toISOString(),
+    }),
+  );
+
+  return uploadId;
+}
+
+export async function saveExcelUploadChunk(
+  uploadId: string,
+  index: number,
+  payload: string,
+) {
+  const db = getInstantDb();
+
+  await db.transact(
+    db.tx.excelUploadChunks[id()].update({
+      uploadId,
+      index,
+      payload,
+    }),
+  );
+}
+
+export async function loadExcelUploadBuffer(uploadId: string) {
+  const db = getInstantDb();
+  const data = await db.query({
+    excelUploads: {
+      $: {
+        where: {
+          id: uploadId,
+        },
+      },
+    },
+    excelUploadChunks: {
+      $: {
+        where: {
+          uploadId,
+        },
+      },
+    },
+  });
+  const upload = data.excelUploads?.[0];
+  const chunks = data.excelUploadChunks ?? [];
+
+  if (!upload || chunks.length === 0) {
+    throw new Error("No se encontró el Excel subido en InstantDB.");
+  }
+
+  const base64 = chunks
+    .sort((a, b) => Number(a.index) - Number(b.index))
+    .map((chunk) => String(chunk.payload))
+    .join("");
+
+  return {
+    fileName: String(upload.fileName),
+    buffer: Buffer.from(base64, "base64"),
+  };
+}
+
+export async function markExcelUploadAsCurrent(uploadId: string) {
+  const db = getInstantDb();
+  const current = await db.query({
+    excelFiles: {
+      $: {
+        where: {
+          key: "current",
+        },
+      },
+    },
+  });
+  const previousUploadId = current.excelFiles?.[0]?.uploadId
+    ? String(current.excelFiles[0].uploadId)
+    : null;
+  const txs = [
+    ...(current.excelFiles ?? []).map((file) => db.tx.excelFiles[file.id].delete()),
+    db.tx.excelFiles[id()].update({
+      key: "current",
+      uploadId,
+      updatedAt: new Date().toISOString(),
+    }),
+    db.tx.excelUploads[uploadId].update({
+      status: "current",
+      completedAt: new Date().toISOString(),
+    }),
+  ];
+
   await db.transact(txs);
+
+  if (previousUploadId && previousUploadId !== uploadId) {
+    await deleteExcelUpload(previousUploadId);
+  }
+}
+
+export async function deleteExcelUpload(uploadId: string) {
+  const db = getInstantDb();
+  const data = await db.query({
+    excelUploads: {
+      $: {
+        where: {
+          id: uploadId,
+        },
+      },
+    },
+    excelUploadChunks: {
+      $: {
+        where: {
+          uploadId,
+        },
+      },
+    },
+  });
+  const txs = [
+    ...(data.excelUploadChunks ?? []).map((chunk) =>
+      db.tx.excelUploadChunks[chunk.id].delete(),
+    ),
+    ...(data.excelUploads ?? []).map((upload) =>
+      db.tx.excelUploads[upload.id].delete(),
+    ),
+  ];
+
+  await transactInBatches(db, txs);
+}
+
+async function transactInBatches(db: InstantDb, txs: unknown[]) {
+  for (let index = 0; index < txs.length; index += TRANSACT_BATCH_SIZE) {
+    await db.transact(
+      txs.slice(index, index + TRANSACT_BATCH_SIZE) as Parameters<
+        InstantDb["transact"]
+      >[0],
+    );
+  }
 }

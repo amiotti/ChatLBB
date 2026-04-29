@@ -363,6 +363,27 @@ export function buildAnalyticsFromExcel(filePath: string): ChatAnalytics {
     cellDates: true,
     raw: false,
   });
+
+  return buildAnalyticsFromWorkbook(workbook, path.basename(filePath));
+}
+
+export function buildAnalyticsFromExcelBuffer(
+  buffer: Buffer,
+  sourceName: string,
+): ChatAnalytics {
+  const workbook = XLSX_LIB.read(buffer, {
+    cellDates: true,
+    raw: false,
+    type: "buffer",
+  });
+
+  return buildAnalyticsFromWorkbook(workbook, sourceName);
+}
+
+function buildAnalyticsFromWorkbook(
+  workbook: XLSX.WorkBook,
+  sourceName: string,
+): ChatAnalytics {
   const sheetName = workbook.SheetNames.includes("TODO")
     ? "TODO"
     : workbook.SheetNames[0];
@@ -666,7 +687,7 @@ export function buildAnalyticsFromExcel(filePath: string): ChatAnalytics {
 
   return {
     generatedAt: new Date().toISOString(),
-    sourceName: path.basename(filePath),
+    sourceName,
     totalMessages,
     totalWords,
     totalMembers: members.size,

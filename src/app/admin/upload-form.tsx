@@ -9,6 +9,8 @@ type UploadFormProps = {
   totalMessages: number;
 };
 
+const CHUNK_BYTES = 700_000;
+
 export function UploadForm({
   currentSource,
   generatedAt,
@@ -16,6 +18,7 @@ export function UploadForm({
 }: UploadFormProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -28,26 +31,50 @@ export function UploadForm({
     }
 
     setIsUploading(true);
-    setStatus("Procesando Excel. Puede tardar un poco si tiene muchas filas...");
+    setProgress(0);
+    setStatus("Creando carga en InstantDB...");
 
-    const body = new FormData();
-    body.append("file", file);
+    try {
+      const initPayload = await postJson("/api/admin/upload/init", {
+        fileName: file.name,
+        size: file.size,
+      });
+      const uploadId = String(initPayload.uploadId);
+      const totalChunks = Math.ceil(file.size / CHUNK_BYTES);
 
-    const response = await fetch("/api/admin/upload", {
-      method: "POST",
-      body,
-    });
-    const payload = await response.json();
+      for (let index = 0; index < totalChunks; index += 1) {
+        const start = index * CHUNK_BYTES;
+        const chunk = file.slice(start, start + CHUNK_BYTES);
+        const payload = await blobToBase64(chunk);
 
-    setIsUploading(false);
+        await postJson("/api/admin/upload/chunk", {
+          uploadId,
+          index,
+          payload,
+        });
 
-    if (!response.ok) {
-      setStatus(payload.error ?? "No se pudo subir el archivo.");
-      return;
+        const nextProgress = Math.round(((index + 1) / totalChunks) * 80);
+        setProgress(nextProgress);
+        setStatus(`Subiendo Excel a InstantDB: ${index + 1}/${totalChunks} partes...`);
+      }
+
+      setProgress(85);
+      setStatus("Excel subido. Procesando métricas desde la BD...");
+
+      const completePayload = await postJson("/api/admin/upload/complete", {
+        uploadId,
+      });
+
+      setProgress(100);
+      setStatus(
+        `Listo: ${Number(completePayload.totalMessages).toLocaleString("es-AR")} mensajes procesados.`,
+      );
+      window.setTimeout(() => window.location.reload(), 1000);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "No se pudo subir el archivo.");
+    } finally {
+      setIsUploading(false);
     }
-
-    setStatus(`Listo: ${payload.totalMessages.toLocaleString("es-AR")} mensajes procesados.`);
-    window.setTimeout(() => window.location.reload(), 1000);
   }
 
   async function logout() {
@@ -119,6 +146,44 @@ export function UploadForm({
       </form>
 
       {status ? <p className="text-sm font-medium text-[#5b523f]">{status}</p> : null}
+      {isUploading ? (
+        <div className="h-3 overflow-hidden rounded-full bg-[#e5dcc9]">
+          <div
+            className="h-full rounded-full bg-[#0d3b3e] transition-all"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      ) : null}
     </div>
   );
+}
+
+async function postJson(url: string, body: unknown) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error ?? "No se pudo completar la operación.");
+  }
+
+  return payload;
+}
+
+function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      resolve(result.split(",")[1] ?? "");
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
