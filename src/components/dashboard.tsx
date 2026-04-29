@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Area,
@@ -66,8 +66,13 @@ const TOPIC_NAMES = ["asado", "padel", "futbol", "viaje", "birra", "laburo", "pl
 export function Dashboard({ analytics }: DashboardProps) {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof window === "undefined") return "dark";
-    const stored = window.localStorage.getItem("chat-theme");
-    return stored === "light" || stored === "dark" ? stored : "dark";
+
+    try {
+      const stored = window.localStorage.getItem("chat-theme");
+      return stored === "light" || stored === "dark" ? stored : "dark";
+    } catch {
+      return "dark";
+    }
   });
   const [member, setMember] = useState("todos");
   const [year, setYear] = useState("todos");
@@ -156,10 +161,20 @@ export function Dashboard({ analytics }: DashboardProps) {
     borderRadius: 12,
   };
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
   function toggleTheme() {
     setTheme((current) => {
       const next = current === "dark" ? "light" : "dark";
-      window.localStorage.setItem("chat-theme", next);
+
+      try {
+        window.localStorage.setItem("chat-theme", next);
+      } catch {
+        // El cambio visual igual debe funcionar aunque el navegador bloquee storage.
+      }
+
       return next;
     });
   }
@@ -447,12 +462,14 @@ export function Dashboard({ analytics }: DashboardProps) {
         </div>
 
         <Panel title="Heatmap día/hora" subtitle="Patrón semanal completo">
-          <div className="grid grid-cols-[56px_repeat(24,minmax(22px,1fr))] gap-1 overflow-x-auto text-xs">
-            <span />
-            {Array.from({ length: 24 }, (_, hour) => <span key={hour} className="text-center text-[var(--muted)]">{hour}</span>)}
-            {dayHourData.map((row) => (
-              <HeatRow key={row.day} row={row} />
-            ))}
+          <div className="overflow-x-auto pb-2">
+            <div className="grid min-w-[720px] grid-cols-[56px_repeat(24,minmax(24px,1fr))] gap-1 text-xs">
+              <span />
+              {Array.from({ length: 24 }, (_, hour) => <span key={hour} className="text-center text-[var(--muted)]">{hour}</span>)}
+              {dayHourData.map((row) => (
+                <HeatRow key={row.day} row={row} />
+              ))}
+            </div>
           </div>
         </Panel>
 
@@ -688,14 +705,20 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
 }
 
 function ChartBox({ children, height = "h-80" }: { children: React.ReactElement; height?: string }) {
-  return <div className={height}><ResponsiveContainer>{children}</ResponsiveContainer></div>;
+  return (
+    <div className="overflow-x-auto pb-2">
+      <div className={`${height} min-w-[520px] sm:min-w-0`}>
+        <ResponsiveContainer>{children}</ResponsiveContainer>
+      </div>
+    </div>
+  );
 }
 
-function MiniMetric({ label, value, accent = "#0d3b3e" }: { label: string; value: string; accent?: string }) {
+function MiniMetric({ label, value, accent = "var(--beer)" }: { label: string; value: string; accent?: string }) {
   return (
-    <div className="rounded-xl border border-[var(--line)]/15 bg-[var(--foreground)]/[0.06] p-3">
+    <div className="min-w-0 rounded-xl border border-[var(--line)]/15 bg-[var(--foreground)]/[0.06] p-3">
       <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">{label}</p>
-      <strong className="mt-1 block text-xl font-black" style={{ color: accent }}>{value}</strong>
+      <strong className="mt-1 block break-words text-xl font-black" style={{ color: accent }}>{value}</strong>
     </div>
   );
 }

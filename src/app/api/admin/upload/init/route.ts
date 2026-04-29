@@ -13,16 +13,22 @@ export async function POST(request: Request) {
     const body = await request.json();
     const fileName = String(body.fileName ?? "");
     const size = Number(body.size ?? 0);
+    const totalChunks = Number(body.totalChunks ?? 0);
 
-    if (!/\.(xlsx|xls)$/i.test(fileName) || !size) {
+    if (
+      !/\.(xlsx|xls)$/i.test(fileName) ||
+      !size ||
+      !Number.isFinite(totalChunks) ||
+      totalChunks <= 0
+    ) {
       return NextResponse.json(
         { ok: false, error: "Archivo Excel invalido" },
         { status: 400 },
       );
     }
 
-    console.log("[admin/upload/init] starting", { fileName, size });
-    const uploadId = await initExcelUpload(fileName, size);
+    console.log("[admin/upload/init] starting", { fileName, size, totalChunks });
+    const uploadId = await initExcelUpload(fileName, size, totalChunks);
 
     return NextResponse.json({ ok: true, uploadId });
   } catch (error) {

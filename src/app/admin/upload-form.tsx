@@ -38,6 +38,7 @@ export function UploadForm({
       const initPayload = await postJson("/api/admin/upload/init", {
         fileName: file.name,
         size: file.size,
+        totalChunks: Math.ceil(file.size / CHUNK_BYTES),
       });
       const uploadId = String(initPayload.uploadId);
       const totalChunks = Math.ceil(file.size / CHUNK_BYTES);

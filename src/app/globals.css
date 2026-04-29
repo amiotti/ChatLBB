@@ -135,6 +135,7 @@ input {
   background: var(--panel);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(16px);
+  min-width: 0;
 }
 
 .panel-card,
@@ -242,6 +243,23 @@ input {
   color: var(--foreground) !important;
   border-radius: 12px !important;
   box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25) !important;
+}
+
+.panel-card ::-webkit-scrollbar,
+.glass-panel ::-webkit-scrollbar {
+  height: 0.55rem;
+}
+
+.panel-card ::-webkit-scrollbar-track,
+.glass-panel ::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+}
+
+.panel-card ::-webkit-scrollbar-thumb,
+.glass-panel ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--beer) 58%, transparent);
+  border-radius: 999px;
 }
 
 @media (max-width: 640px) {

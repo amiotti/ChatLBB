@@ -115,7 +115,11 @@ export async function saveAnalyticsToDb(analytics: ChatAnalytics) {
   await transactInBatches(db, txs);
 }
 
-export async function initExcelUpload(fileName: string, size: number) {
+export async function initExcelUpload(
+  fileName: string,
+  size: number,
+  totalChunks: number,
+) {
   const db = getInstantDb();
   const uploadId = id();
 
@@ -123,6 +127,7 @@ export async function initExcelUpload(fileName: string, size: number) {
     db.tx.excelUploads[uploadId].update({
       fileName,
       size,
+      totalChunks,
       status: "uploading",
       createdAt: new Date().toISOString(),
     }),
@@ -139,7 +144,7 @@ export async function saveExcelUploadChunk(
   const db = getInstantDb();
 
   await db.transact(
-    db.tx.excelUploadChunks[id()].update({
+    db.tx.excelUploadChunks[`${uploadId}-${index}`].update({
       uploadId,
       index,
       payload,
@@ -172,14 +177,46 @@ export async function loadExcelUploadBuffer(uploadId: string) {
     throw new Error("No se encontró el Excel subido en InstantDB.");
   }
 
-  const base64 = chunks
-    .sort((a, b) => Number(a.index) - Number(b.index))
-    .map((chunk) => String(chunk.payload))
-    .join("");
+  const chunkMap = new Map<number, string>();
+
+  for (const chunk of chunks) {
+    const index = Number(chunk.index);
+
+    if (Number.isFinite(index)) {
+      chunkMap.set(index, String(chunk.payload));
+    }
+  }
+
+  const expectedChunks = Number(upload.totalChunks || chunkMap.size);
+  const missingIndexes: number[] = [];
+
+  for (let index = 0; index < expectedChunks; index += 1) {
+    if (!chunkMap.has(index)) {
+      missingIndexes.push(index);
+    }
+  }
+
+  if (missingIndexes.length > 0) {
+    throw new Error(
+      `Faltan ${missingIndexes.length} partes del Excel. Volve a intentar la carga.`,
+    );
+  }
+
+  const base64 = Array.from({ length: expectedChunks }, (_, index) =>
+    chunkMap.get(index) ?? "",
+  ).join("");
+  const buffer = Buffer.from(base64, "base64");
+  const expectedSize = Number(upload.size || 0);
+
+  if (expectedSize && buffer.length !== expectedSize) {
+    throw new Error(
+      `El Excel subido quedo incompleto (${buffer.length}/${expectedSize} bytes). Volve a intentar la carga.`,
+    );
+  }
 
   return {
     fileName: String(upload.fileName),
-    buffer: Buffer.from(base64, "base64"),
+    buffer,
   };
 }
 
