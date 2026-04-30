@@ -1162,7 +1162,7 @@ function extractPhrases(words: string[], message: string) {
   const mediaLabel = mediaOmittedLabel(message);
 
   if (mediaLabel) {
-    return [mediaLabel];
+    return [];
   }
 
   const phrases: string[] = [];

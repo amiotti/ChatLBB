@@ -117,7 +117,10 @@ export function Dashboard({ analytics }: DashboardProps) {
   const emojis = useMemo(() => aggregateCount(scoped.emojis, 14), [scoped.emojis]);
   const domains = useMemo(() => aggregateCount(scoped.domains, 12), [scoped.domains]);
   const topics = useMemo(() => aggregateCount(scoped.topics, 12), [scoped.topics]);
-  const phrases = useMemo(() => aggregateCount(scoped.phrases, 12), [scoped.phrases]);
+  const phrases = useMemo(
+    () => aggregateCount(filterRepeatedPhrases(scoped.phrases, analytics.members), 12),
+    [analytics.members, scoped.phrases],
+  );
   const selectedTopic = useMemo(() => topicEvolution(scoped.topics, topic), [scoped.topics, topic]);
   const memberStats = useMemo(() => memberStatsFromMonths(scoped.months, scoped.days, scoped.dayHours), [scoped.dayHours, scoped.days, scoped.months]);
   const generalStats = useMemo(() => scopedGeneralStats(scoped.days, totals, dateFrom, dateTo), [dateFrom, dateTo, scoped.days, totals]);
@@ -278,7 +281,7 @@ export function Dashboard({ analytics }: DashboardProps) {
           </button>
         </div>
 
-        <SectionTitle kicker="Resumen ejecutivo" title="Foto general del grupo" />
+        <SectionTitle kicker="Resumen" title="Foto general del grupo" />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {executive.map((item) => <Kpi key={item.title} title={item.title} value={item.value} note={item.note} />)}
         </div>
@@ -983,6 +986,40 @@ function aggregateCount(rows: CountPoint[], limit: number) {
   const map = new Map<string, number>();
   for (const row of rows) map.set(row.value, (map.get(row.value) ?? 0) + row.count);
   return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([value, count]) => ({ value, count }));
+}
+
+function filterRepeatedPhrases(rows: CountPoint[], members: string[]) {
+  const blockedExact = new Set(["sticker", "audio", "imagen", "video"]);
+  const memberTerms = new Set(
+    members.flatMap((member) => {
+      const normalized = normalizeDashboardText(member);
+      const parts = normalized
+        .split(/\s+/)
+        .filter((part) => part.length >= 3 && part !== "meta");
+
+      return [normalized, ...parts];
+    }),
+  );
+
+  return rows.filter((row) => {
+    const phrase = normalizeDashboardText(row.value);
+
+    if (blockedExact.has(phrase)) {
+      return false;
+    }
+
+    const phraseParts = phrase.split(/\s+/);
+
+    return !phraseParts.some((part) => memberTerms.has(part)) && !memberTerms.has(phrase);
+  });
+}
+
+function normalizeDashboardText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }
 
 function topicEvolution(rows: CountPoint[], topic: string) {
