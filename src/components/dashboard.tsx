@@ -409,11 +409,14 @@ export function Dashboard({ analytics }: DashboardProps) {
         <div className="grid gap-6 xl:grid-cols-2">
           <Panel title="Evolución anual por participante" subtitle="Top integrantes en cada año">
             <ChartBox>
-              <BarChart data={yearMemberLeaders(scoped.months)}>
+              <BarChart data={yearMemberLeaders(scoped.months)} margin={{ bottom: 18 }}>
                 <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="4 4" />
-                <XAxis dataKey="label" tick={chartTick} />
+                <XAxis dataKey="label" height={58} interval={0} tick={<YearMemberTick />} />
                 <YAxis tick={chartTick} />
-                <Tooltip contentStyle={tooltipStyle} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  labelFormatter={(label) => String(label).replace("|", " - ")}
+                />
                 <Bar dataKey="messages" fill="var(--beer)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ChartBox>
@@ -714,6 +717,45 @@ function ChartBox({ children, height = "h-80" }: { children: React.ReactElement;
         <ResponsiveContainer>{children}</ResponsiveContainer>
       </div>
     </div>
+  );
+}
+
+function YearMemberTick({
+  x,
+  y,
+  payload,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value?: string };
+}) {
+  const [year = "", member = ""] = String(payload?.value ?? "").split("|");
+  const shortMember = member.length > 14 ? `${member.slice(0, 13)}...` : member;
+
+  return (
+    <g transform={`translate(${x ?? 0},${y ?? 0})`}>
+      <text
+        x={0}
+        y={0}
+        dy={12}
+        textAnchor="middle"
+        fill="var(--chart-text)"
+        fontSize={11}
+        fontWeight={800}
+      >
+        {year}
+      </text>
+      <text
+        x={0}
+        y={0}
+        dy={28}
+        textAnchor="middle"
+        fill="var(--muted)"
+        fontSize={10}
+      >
+        {shortMember}
+      </text>
+    </g>
   );
 }
 
@@ -1257,7 +1299,13 @@ function yearMemberLeaders(rows: MetricPoint[]) {
     const year = Number(yearText);
     if (!byYear.get(year) || messages > byYear.get(year)!.messages) byYear.set(year, { member, messages });
   }
-  return [...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([year, row]) => ({ label: `${year} · ${row.member}`, messages: row.messages }));
+  return [...byYear.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([year, row]) => ({
+      label: `${year}|${row.member}`,
+      name: `${year} - ${row.member}`,
+      messages: row.messages,
+    }));
 }
 
 function monthlyLeaders(rows: MetricPoint[]) {
