@@ -9,7 +9,7 @@ type UploadFormProps = {
   totalMessages: number;
 };
 
-const CHUNK_BYTES = 180_000;
+const CHUNK_BYTES = 600_000;
 
 export function UploadForm({
   currentSource,
@@ -60,7 +60,7 @@ export function UploadForm({
       }
 
       setProgress(85);
-      setStatus("Excel subido. Procesando métricas desde la BD...");
+      setStatus("Excel subido. Procesando metricas desde la BD... puede tardar unos minutos.");
 
       const completePayload = await postJson("/api/admin/upload/complete", {
         uploadId,

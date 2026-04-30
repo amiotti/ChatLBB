@@ -362,6 +362,7 @@ export function buildAnalyticsFromExcel(filePath: string): ChatAnalytics {
   const workbook = XLSX_LIB.readFile(filePath, {
     cellDates: true,
     raw: false,
+    dense: true,
   });
 
   return buildAnalyticsFromWorkbook(workbook, path.basename(filePath));
@@ -374,6 +375,7 @@ export function buildAnalyticsFromExcelBuffer(
   const workbook = XLSX_LIB.read(buffer, {
     cellDates: true,
     raw: false,
+    dense: true,
     type: "buffer",
   });
 
@@ -388,10 +390,7 @@ function buildAnalyticsFromWorkbook(
     ? "TODO"
     : workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
-  const rows = XLSX_LIB.utils.sheet_to_json<Record<string, string>>(sheet, {
-    raw: false,
-    defval: "",
-  });
+  const rowIterator = iterateChatRows(sheet);
 
   const monthMap = new Map<string, MetricPoint>();
   const hourMap = new Map<string, BucketPoint>();
@@ -450,7 +449,7 @@ function buildAnalyticsFromWorkbook(
   let firstDate: Date | null = null;
   let lastDate: Date | null = null;
 
-  for (const row of rows) {
+  for (const row of rowIterator) {
     const member = cleanMember(row.NOMBRE);
     const message = cleanMessage(row.MSJ);
     const date = parseDate(row.FECHA, row.HORA);
@@ -805,6 +804,78 @@ function buildAnalyticsFromWorkbook(
         : 0,
     });
   }
+}
+
+function* iterateChatRows(sheet: XLSX.WorkSheet) {
+  const ref = sheet["!ref"];
+
+  if (!ref) {
+    return;
+  }
+
+  const range = XLSX_LIB.utils.decode_range(ref);
+  const headers = new Map<string, number>();
+
+  for (let column = range.s.c; column <= range.e.c; column += 1) {
+    const label = normalizeHeader(readCellAt(sheet, range.s.r, column));
+
+    if (label) {
+      headers.set(label, column);
+    }
+  }
+
+  const nombreColumn = headers.get("NOMBRE");
+  const mensajeColumn = headers.get("MSJ") ?? headers.get("MENSAJE");
+  const fechaColumn = headers.get("FECHA");
+  const horaColumn = headers.get("HORA");
+
+  if (
+    nombreColumn === undefined ||
+    mensajeColumn === undefined ||
+    fechaColumn === undefined ||
+    horaColumn === undefined
+  ) {
+    return;
+  }
+
+  for (let row = range.s.r + 1; row <= range.e.r; row += 1) {
+    yield {
+      NOMBRE: readCellAt(sheet, row, nombreColumn),
+      MSJ: readCellAt(sheet, row, mensajeColumn),
+      FECHA: readCellAt(sheet, row, fechaColumn),
+      HORA: readCellAt(sheet, row, horaColumn),
+    };
+  }
+}
+
+function readCellAt(sheet: XLSX.WorkSheet, row: number, column: number) {
+  const denseCell = (sheet as unknown as Array<Array<XLSX.CellObject | undefined>>)[
+    row
+  ]?.[column];
+
+  if (denseCell) {
+    return XLSX_LIB.utils.format_cell(denseCell);
+  }
+
+  return readCell(sheet, XLSX_LIB.utils.encode_cell({ r: row, c: column }));
+}
+
+function readCell(sheet: XLSX.WorkSheet, address: string) {
+  const cell = sheet[address];
+
+  if (!cell) {
+    return "";
+  }
+
+  return XLSX_LIB.utils.format_cell(cell);
+}
+
+function normalizeHeader(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
 }
 
 function addMetric(

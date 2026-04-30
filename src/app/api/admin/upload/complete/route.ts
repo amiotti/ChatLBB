@@ -26,11 +26,14 @@ export async function POST(request: Request) {
       );
     }
 
+    const startedAt = Date.now();
+
     console.log("[admin/upload/complete] loading upload", { uploadId });
     const { fileName, buffer } = await loadExcelUploadBuffer(uploadId);
     console.log("[admin/upload/complete] building analytics", {
       fileName,
       bytes: buffer.length,
+      elapsedMs: Date.now() - startedAt,
     });
     const analytics = buildAnalyticsFromExcelBuffer(buffer, fileName);
     const nextAnalytics = {
@@ -41,6 +44,7 @@ export async function POST(request: Request) {
 
     console.log("[admin/upload/complete] saving analytics", {
       totalMessages: analytics.totalMessages,
+      elapsedMs: Date.now() - startedAt,
     });
     await saveAnalyticsToDb(nextAnalytics);
     await markExcelUploadAsCurrent(uploadId);
@@ -49,8 +53,11 @@ export async function POST(request: Request) {
       ok: true,
       totalMessages: analytics.totalMessages,
       storage: "instantdb",
+      elapsedMs: Date.now() - startedAt,
     });
   } catch (error) {
+    console.error("[admin/upload/complete] failed", error);
+
     return NextResponse.json(
       {
         ok: false,

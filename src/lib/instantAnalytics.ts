@@ -13,6 +13,7 @@ const TRANSACT_BATCH_SIZE = 80;
 type InstantDb = ReturnType<typeof init>;
 
 let instantDb: InstantDb | null = null;
+let analyticsCache: ChatAnalytics | null = null;
 
 function getInstantDb() {
   if (!process.env.INSTANT_APP_ADMIN_TOKEN) {
@@ -32,6 +33,10 @@ function getInstantDb() {
 export async function loadAnalyticsFromDb() {
   if (!process.env.INSTANT_APP_ADMIN_TOKEN) {
     return null;
+  }
+
+  if (analyticsCache) {
+    return analyticsCache;
   }
 
   const db = getInstantDb();
@@ -64,7 +69,9 @@ export async function loadAnalyticsFromDb() {
     .join("");
   const json = inflate(Buffer.from(encoded, "base64"), { to: "string" });
 
-  return JSON.parse(json) as ChatAnalytics;
+  analyticsCache = JSON.parse(json) as ChatAnalytics;
+
+  return analyticsCache;
 }
 
 export async function saveAnalyticsToDb(analytics: ChatAnalytics) {
@@ -113,6 +120,7 @@ export async function saveAnalyticsToDb(analytics: ChatAnalytics) {
   ];
 
   await transactInBatches(db, txs);
+  analyticsCache = analytics;
 }
 
 export async function initExcelUpload(
@@ -142,28 +150,15 @@ export async function saveExcelUploadChunk(
   payload: string,
 ) {
   const db = getInstantDb();
-  const existing = await db.query({
-    excelUploadChunks: {
-      $: {
-        where: {
-          uploadId,
-        },
-      },
-    },
-  });
-  const duplicateChunks = (existing.excelUploadChunks ?? []).filter(
-    (chunk) => Number(chunk.index) === index,
-  );
-  const txs = [
-    ...duplicateChunks.map((chunk) => db.tx.excelUploadChunks[chunk.id].delete()),
+
+  await db.transact(
     db.tx.excelUploadChunks[id()].update({
       uploadId,
       index,
       payload,
+      receivedAt: new Date().toISOString(),
     }),
-  ];
-
-  await db.transact(txs);
+  );
 }
 
 export async function loadExcelUploadBuffer(uploadId: string) {
@@ -193,7 +188,9 @@ export async function loadExcelUploadBuffer(uploadId: string) {
 
   const chunkMap = new Map<number, string>();
 
-  for (const chunk of chunks) {
+  for (const chunk of chunks.sort((a, b) =>
+    String(a.receivedAt ?? "").localeCompare(String(b.receivedAt ?? "")),
+  )) {
     const index = Number(chunk.index);
 
     if (Number.isFinite(index)) {
