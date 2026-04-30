@@ -1412,16 +1412,40 @@ function longestSilencesBetween(
 
 function formatDate(value?: string | null) {
   if (!value) return "-";
+  const dateOnly = formatDateOnly(value);
+
+  if (dateOnly) {
+    return dateOnly;
+  }
+
   return new Date(value).toLocaleDateString("es-AR");
 }
 
 function formatShortDate(value: string) {
+  const dateOnly = formatDateOnly(value, { shortYear: true });
+
+  if (dateOnly) {
+    return dateOnly;
+  }
+
   return new Date(value).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" });
 }
 
 function formatDateRange(first: string | null, last: string | null) {
   if (!first || !last) return "Sin fechas";
   return `${formatDate(first)} - ${formatDate(last)}`;
+}
+
+function formatDateOnly(value: string, options: { shortYear?: boolean } = {}) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(value);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day] = match;
+
+  return `${day}/${month}/${options.shortYear ? year.slice(2) : year}`;
 }
 
 function formatNumber(value: number, digits = 0) {
