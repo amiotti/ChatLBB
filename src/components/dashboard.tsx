@@ -1290,7 +1290,7 @@ function executiveSummary(
     { title: "Palabra top", value: words[0]?.word ?? "-", note: `${words[0]?.count.toLocaleString("es-AR") ?? 0} menciones` },
     { title: "Emoji top", value: emojis[0]?.value ?? "-", note: `${emojis[0]?.count.toLocaleString("es-AR") ?? 0} usos` },
     { title: "Mes más activo", value: topMonth?.label ?? "-", note: `${topMonth?.messages.toLocaleString("es-AR") ?? 0} mensajes históricos` },
-    { title: "Links", value: totals.links.toLocaleString("es-AR"), note: "en el filtro actual" },
+    { title: "Cantidad de mensajes", value: totals.messages.toLocaleString("es-AR"), note: "en el filtro actual" },
     { title: "Audios/stickers", value: (totals.audios + totals.stickers).toLocaleString("es-AR"), note: "contenido no textual detectado" },
   ];
 }
