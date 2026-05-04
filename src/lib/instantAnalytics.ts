@@ -161,6 +161,49 @@ export async function saveExcelUploadChunk(
   );
 }
 
+export async function getExcelUploadStatus(uploadId: string) {
+  const db = getInstantDb();
+  const data = await db.query({
+    excelUploads: {
+      $: {
+        where: {
+          id: uploadId,
+        },
+      },
+    },
+  });
+  const upload = data.excelUploads?.[0];
+
+  if (!upload) {
+    throw new Error("No se encontro la carga del Excel.");
+  }
+
+  return {
+    id: String(upload.id),
+    fileName: String(upload.fileName ?? ""),
+    status: String(upload.status ?? "uploading"),
+    totalMessages: Number(upload.totalMessages ?? 0),
+    error: upload.error ? String(upload.error) : null,
+    startedAt: upload.startedAt ? String(upload.startedAt) : null,
+    completedAt: upload.completedAt ? String(upload.completedAt) : null,
+    updatedAt: upload.updatedAt ? String(upload.updatedAt) : null,
+  };
+}
+
+export async function updateExcelUploadStatus(
+  uploadId: string,
+  values: Record<string, string | number | null>,
+) {
+  const db = getInstantDb();
+
+  await db.transact(
+    db.tx.excelUploads[uploadId].update({
+      ...values,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+}
+
 export async function loadExcelUploadBuffer(uploadId: string) {
   const db = getInstantDb();
   const data = await db.query({

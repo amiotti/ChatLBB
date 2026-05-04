@@ -952,16 +952,28 @@ function rankingByMember(rows: MetricPoint[]) {
 
 function memberYearGrowth(rows: MetricPoint[]) {
   const byMemberYear = new Map<string, number>();
+  const currentYear = Math.max(...rows.map((row) => row.year));
+  const previousYear = currentYear - 1;
+
+  if (!Number.isFinite(currentYear)) {
+    return [];
+  }
 
   for (const row of rows) {
+    if (row.year !== currentYear && row.year !== previousYear) {
+      continue;
+    }
+
     const key = `${row.member}|${row.year}`;
     byMemberYear.set(key, (byMemberYear.get(key) ?? 0) + row.messages);
   }
 
-  const growth = [...byMemberYear.entries()].flatMap(([key, current]) => {
-    const [member, yearText] = key.split("|");
-    const year = Number(yearText);
-    const previous = byMemberYear.get(`${member}|${year - 1}`) ?? 0;
+  const currentRows = [...byMemberYear.entries()].filter(([key]) =>
+    key.endsWith(`|${currentYear}`),
+  );
+  const growth = currentRows.flatMap(([key, current]) => {
+    const [member] = key.split("|");
+    const previous = byMemberYear.get(`${member}|${previousYear}`) ?? 0;
 
     if (previous <= 0 || current <= previous) {
       return [];
@@ -972,7 +984,7 @@ function memberYearGrowth(rows: MetricPoint[]) {
     return [
       {
         member,
-        year,
+        year: currentYear,
         current,
         previous,
         increase,
