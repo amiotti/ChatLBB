@@ -123,10 +123,7 @@ export function Dashboard({ analytics }: DashboardProps) {
   );
   const selectedTopic = useMemo(() => topicEvolution(scoped.topics, topic), [scoped.topics, topic]);
   const memberStats = useMemo(() => memberStatsFromMonths(scoped.months, scoped.days, scoped.dayHours), [scoped.dayHours, scoped.days, scoped.months]);
-  const quarterGrowth = useMemo(
-    () => memberQuarterGrowth(scoped.months, analytics.months, year, month),
-    [analytics.months, month, scoped.months, year],
-  );
+  const recentGrowth = useMemo(() => memberRecentGrowth(scoped.days), [scoped.days]);
   const generalStats = useMemo(() => scopedGeneralStats(scoped.days, totals, dateFrom, dateTo), [dateFrom, dateTo, scoped.days, totals]);
   const executive = useMemo(() => executiveSummary(analytics, totals, ranking, hourData, wordCloud, emojis, generalStats), [analytics, emojis, generalStats, hourData, ranking, totals, wordCloud]);
   const nightRanking = rankingMetric(memberStats, "nightMessages");
@@ -429,10 +426,10 @@ export function Dashboard({ analytics }: DashboardProps) {
           <Panel title="Más activo cada mes" subtitle="Líderes mensuales recientes">
             <RankList rows={monthlyLeaders(scoped.months).slice(-12).reverse().map((row) => ({ label: `${row.label}: ${row.member}`, value: row.messages }))} />
           </Panel>
-          <Panel title="Mayor crecimiento trimestral" subtitle="Aumento contra el trimestre anterior">
+          <Panel title="Mayor crecimiento reciente" subtitle="Últimos 90 días de cada integrante vs. 90 previos">
             <RankList
-              rows={quarterGrowth.slice(0, 8).map((row) => ({
-                label: `${row.member} (${quarterLabel(row.year, row.quarter)})`,
+              rows={recentGrowth.slice(0, 5).map((row) => ({
+                label: `${row.member} (hasta ${formatShortDate(row.lastDate)})`,
                 value: row.increase,
                 share: row.percent,
               }))}
@@ -918,87 +915,83 @@ function rankingByMember(rows: MetricPoint[]) {
   return [...map.entries()].map(([name, totals]) => ({ member: name, ...totals, share: (totals.messages / totalMessages) * 100 })).sort((a, b) => b.messages - a.messages);
 }
 
-function memberQuarterGrowth(
-  scopedRows: MetricPoint[],
-  allRows: MetricPoint[],
-  selectedYear: string,
-  selectedMonth: string,
-) {
-  const byMemberPeriod = new Map<string, number>();
-  const scopedMembers = new Set(scopedRows.map((row) => row.member));
-  const selectedMonthNumber = Number(selectedMonth);
-  const candidatePeriods = [
-    ...new Map(
-      scopedRows
-        .filter((row) => {
-          if (selectedYear && row.year !== Number(selectedYear)) {
-            return false;
-          }
+function memberRecentGrowth(rows: DayPoint[]) {
+  const byMember = new Map<string, DayPoint[]>();
+  const windowDays = 90;
 
-          if (
-            selectedMonth &&
-            quarterFromMonth(row.month) !== quarterFromMonth(selectedMonthNumber)
-          ) {
-            return false;
-          }
+  for (const row of rows) {
+    const current = byMember.get(row.member) ?? [];
+    current.push(row);
+    byMember.set(row.member, current);
+  }
 
-          return true;
-        })
-        .map((row) => {
-          const quarter = quarterFromMonth(row.month);
-
-          return [`${row.year}|${quarter}`, { year: row.year, quarter }];
-        }),
-    ).values(),
-  ].sort((a, b) => periodIndex(b.year, b.quarter) - periodIndex(a.year, a.quarter));
-
-  if (scopedRows.length === 0 || candidatePeriods.length === 0) {
+  if (byMember.size === 0) {
     return [];
   }
 
-  for (const row of allRows) {
-    if (scopedMembers.size > 0 && !scopedMembers.has(row.member)) {
-      continue;
-    }
-
-    const quarter = quarterFromMonth(row.month);
-    const key = `${row.member}|${row.year}|${quarter}`;
-    byMemberPeriod.set(key, (byMemberPeriod.get(key) ?? 0) + row.messages);
-  }
-
-  for (const { year: currentYear, quarter: currentQuarter } of candidatePeriods) {
-    const previous = previousQuarter(currentYear, currentQuarter);
-    const currentRows = [...byMemberPeriod.entries()].filter(([key]) =>
-      key.endsWith(`|${currentYear}|${currentQuarter}`),
+  const growth = [...byMember.entries()].flatMap(([member, memberRows]) => {
+    const lastDate = memberRows.reduce(
+      (latest, row) => (row.date > latest ? row.date : latest),
+      "",
     );
-    const growth = currentRows.flatMap(([key, current]) => {
-      const [member] = key.split("|");
-      const previousMessages =
-        byMemberPeriod.get(`${member}|${previous.year}|${previous.quarter}`) ?? 0;
+    const currentStart = addDays(lastDate, -(windowDays - 1));
+    const previousEnd = addDays(currentStart, -1);
+    const previousStart = addDays(previousEnd, -(windowDays - 1));
+    let currentMessages = 0;
+    let previousMessages = 0;
 
-      if (current <= previousMessages) {
-        return [];
+    for (const row of memberRows) {
+      if (row.date >= currentStart && row.date <= lastDate) {
+        currentMessages += row.messages;
+      } else if (row.date >= previousStart && row.date <= previousEnd) {
+        previousMessages += row.messages;
       }
-
-      const increase = current - previousMessages;
-
-      return [
-        {
-          member,
-          year: currentYear,
-          quarter: currentQuarter,
-          increase,
-          percent: previousMessages > 0 ? (increase / previousMessages) * 100 : 100,
-        },
-      ];
-    });
-
-    if (growth.length > 0 || selectedYear || selectedMonth) {
-      return growth.sort((a, b) => b.percent - a.percent || b.increase - a.increase);
     }
+
+    if (currentMessages <= previousMessages) {
+      return [];
+    }
+
+    const increase = currentMessages - previousMessages;
+
+    return [
+      {
+        member,
+        lastDate,
+        currentMessages,
+        previousMessages,
+        increase,
+        percent: previousMessages > 0 ? (increase / previousMessages) * 100 : 100,
+      },
+    ];
+  });
+
+  if (growth.length > 0) {
+    return growth.sort((a, b) => b.increase - a.increase || b.percent - a.percent);
   }
 
-  return [];
+  return [...byMember.entries()]
+    .map(([member, memberRows]) => {
+      const lastDate = memberRows.reduce(
+        (latest, row) => (row.date > latest ? row.date : latest),
+        "",
+      );
+      const currentStart = addDays(lastDate, -(windowDays - 1));
+      const currentMessages = memberRows
+        .filter((row) => row.date >= currentStart && row.date <= lastDate)
+        .reduce((sum, row) => sum + row.messages, 0);
+
+      return {
+        member,
+        lastDate,
+        currentMessages,
+        previousMessages: 0,
+        increase: currentMessages,
+        percent: 100,
+      };
+    })
+    .filter((row) => row.currentMessages > 0)
+    .sort((a, b) => b.currentMessages - a.currentMessages);
 }
 
 function timelineData(rows: MetricPoint[]) {
@@ -1404,24 +1397,6 @@ function executiveSummary(
 
 function monthKey(row: { year: number; month: number }) {
   return `${row.year}-${String(row.month).padStart(2, "0")}`;
-}
-
-function quarterFromMonth(month: number) {
-  return Math.max(1, Math.ceil(month / 3));
-}
-
-function previousQuarter(year: number, quarter: number) {
-  return quarter > 1
-    ? { year, quarter: quarter - 1 }
-    : { year: year - 1, quarter: 4 };
-}
-
-function periodIndex(year: number, quarter: number) {
-  return year * 4 + quarter;
-}
-
-function quarterLabel(year: number, quarter: number) {
-  return `T${quarter} ${year}`;
 }
 
 function monthLabelFromKey(key: string) {
