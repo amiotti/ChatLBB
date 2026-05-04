@@ -123,6 +123,7 @@ export function Dashboard({ analytics }: DashboardProps) {
   );
   const selectedTopic = useMemo(() => topicEvolution(scoped.topics, topic), [scoped.topics, topic]);
   const memberStats = useMemo(() => memberStatsFromMonths(scoped.months, scoped.days, scoped.dayHours), [scoped.dayHours, scoped.days, scoped.months]);
+  const yearOverYearGrowth = useMemo(() => memberYearGrowth(scoped.months), [scoped.months]);
   const generalStats = useMemo(() => scopedGeneralStats(scoped.days, totals, dateFrom, dateTo), [dateFrom, dateTo, scoped.days, totals]);
   const executive = useMemo(() => executiveSummary(analytics, totals, ranking, hourData, wordCloud, emojis, generalStats), [analytics, emojis, generalStats, hourData, ranking, totals, wordCloud]);
   const nightRanking = rankingMetric(memberStats, "nightMessages");
@@ -406,7 +407,7 @@ export function Dashboard({ analytics }: DashboardProps) {
           </Panel>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-2">
+        <div className="grid gap-6 xl:grid-cols-[1fr_0.75fr_0.75fr]">
           <Panel title="Evolución anual por participante" subtitle="Top integrantes en cada año">
             <ChartBox>
               <BarChart data={yearMemberLeaders(scoped.months)} margin={{ bottom: 18 }}>
@@ -423,6 +424,15 @@ export function Dashboard({ analytics }: DashboardProps) {
           </Panel>
           <Panel title="Más activo cada mes" subtitle="Líderes mensuales recientes">
             <RankList rows={monthlyLeaders(scoped.months).slice(-12).reverse().map((row) => ({ label: `${row.label}: ${row.member}`, value: row.messages }))} />
+          </Panel>
+          <Panel title="Mayor crecimiento anual" subtitle="Aumento contra el año anterior">
+            <RankList
+              rows={yearOverYearGrowth.slice(0, 8).map((row) => ({
+                label: `${row.member} (${row.year})`,
+                value: row.increase,
+                share: row.percent,
+              }))}
+            />
           </Panel>
         </div>
 
@@ -941,6 +951,40 @@ function rankingByMember(rows: MetricPoint[]) {
   }
 
   return [...map.entries()].map(([name, totals]) => ({ member: name, ...totals, share: (totals.messages / totalMessages) * 100 })).sort((a, b) => b.messages - a.messages);
+}
+
+function memberYearGrowth(rows: MetricPoint[]) {
+  const byMemberYear = new Map<string, number>();
+
+  for (const row of rows) {
+    const key = `${row.member}|${row.year}`;
+    byMemberYear.set(key, (byMemberYear.get(key) ?? 0) + row.messages);
+  }
+
+  const growth = [...byMemberYear.entries()].flatMap(([key, current]) => {
+    const [member, yearText] = key.split("|");
+    const year = Number(yearText);
+    const previous = byMemberYear.get(`${member}|${year - 1}`) ?? 0;
+
+    if (previous <= 0 || current <= previous) {
+      return [];
+    }
+
+    const increase = current - previous;
+
+    return [
+      {
+        member,
+        year,
+        current,
+        previous,
+        increase,
+        percent: (increase / previous) * 100,
+      },
+    ];
+  });
+
+  return growth.sort((a, b) => b.percent - a.percent || b.increase - a.increase);
 }
 
 function timelineData(rows: MetricPoint[]) {
