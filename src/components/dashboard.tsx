@@ -123,7 +123,10 @@ export function Dashboard({ analytics }: DashboardProps) {
   );
   const selectedTopic = useMemo(() => topicEvolution(scoped.topics, topic), [scoped.topics, topic]);
   const memberStats = useMemo(() => memberStatsFromMonths(scoped.months, scoped.days, scoped.dayHours), [scoped.dayHours, scoped.days, scoped.months]);
-  const yearOverYearGrowth = useMemo(() => memberYearGrowth(scoped.months), [scoped.months]);
+  const yearOverYearGrowth = useMemo(
+    () => memberYearGrowth(scoped.months, analytics.months, year),
+    [analytics.months, scoped.months, year],
+  );
   const generalStats = useMemo(() => scopedGeneralStats(scoped.days, totals, dateFrom, dateTo), [dateFrom, dateTo, scoped.days, totals]);
   const executive = useMemo(() => executiveSummary(analytics, totals, ranking, hourData, wordCloud, emojis, generalStats), [analytics, emojis, generalStats, hourData, ranking, totals, wordCloud]);
   const nightRanking = rankingMetric(memberStats, "nightMessages");
@@ -950,17 +953,33 @@ function rankingByMember(rows: MetricPoint[]) {
   return [...map.entries()].map(([name, totals]) => ({ member: name, ...totals, share: (totals.messages / totalMessages) * 100 })).sort((a, b) => b.messages - a.messages);
 }
 
-function memberYearGrowth(rows: MetricPoint[]) {
+function memberYearGrowth(
+  scopedRows: MetricPoint[],
+  allRows: MetricPoint[],
+  selectedYear: string,
+) {
   const byMemberYear = new Map<string, number>();
-  const currentYear = Math.max(...rows.map((row) => row.year));
-  const previousYear = currentYear - 1;
+  const scopedMembers = new Set(scopedRows.map((row) => row.member));
+  const scopedMonths = new Set(scopedRows.map((row) => row.month));
+  const years = [
+    ...new Set(
+      (selectedYear
+        ? [Number(selectedYear)]
+        : scopedRows.map((row) => row.year)
+      ).filter(Number.isFinite),
+    ),
+  ].sort((a, b) => b - a);
 
-  if (!Number.isFinite(currentYear)) {
+  if (scopedRows.length === 0 || years.length === 0) {
     return [];
   }
 
-  for (const row of rows) {
-    if (row.year !== currentYear && row.year !== previousYear) {
+  for (const row of allRows) {
+    if (scopedMembers.size > 0 && !scopedMembers.has(row.member)) {
+      continue;
+    }
+
+    if (scopedMonths.size > 0 && !scopedMonths.has(row.month)) {
       continue;
     }
 
@@ -968,32 +987,39 @@ function memberYearGrowth(rows: MetricPoint[]) {
     byMemberYear.set(key, (byMemberYear.get(key) ?? 0) + row.messages);
   }
 
-  const currentRows = [...byMemberYear.entries()].filter(([key]) =>
-    key.endsWith(`|${currentYear}`),
-  );
-  const growth = currentRows.flatMap(([key, current]) => {
-    const [member] = key.split("|");
-    const previous = byMemberYear.get(`${member}|${previousYear}`) ?? 0;
+  for (const currentYear of years) {
+    const previousYear = currentYear - 1;
+    const currentRows = [...byMemberYear.entries()].filter(([key]) =>
+      key.endsWith(`|${currentYear}`),
+    );
+    const growth = currentRows.flatMap(([key, current]) => {
+      const [member] = key.split("|");
+      const previous = byMemberYear.get(`${member}|${previousYear}`) ?? 0;
 
-    if (previous <= 0 || current <= previous) {
-      return [];
+      if (previous <= 0 || current <= previous) {
+        return [];
+      }
+
+      const increase = current - previous;
+
+      return [
+        {
+          member,
+          year: currentYear,
+          current,
+          previous,
+          increase,
+          percent: (increase / previous) * 100,
+        },
+      ];
+    });
+
+    if (growth.length > 0 || selectedYear) {
+      return growth.sort((a, b) => b.percent - a.percent || b.increase - a.increase);
     }
+  }
 
-    const increase = current - previous;
-
-    return [
-      {
-        member,
-        year: currentYear,
-        current,
-        previous,
-        increase,
-        percent: (increase / previous) * 100,
-      },
-    ];
-  });
-
-  return growth.sort((a, b) => b.percent - a.percent || b.increase - a.increase);
+  return [];
 }
 
 function timelineData(rows: MetricPoint[]) {
