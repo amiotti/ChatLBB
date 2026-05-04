@@ -9,8 +9,9 @@ type UploadFormProps = {
   totalMessages: number;
 };
 
-const CHUNK_BYTES = 600_000;
-const ANALYTICS_CHUNK_CHARS = 250_000;
+const CHUNK_BYTES = 1_200_000;
+const ANALYTICS_CHUNK_CHARS = 900_000;
+const UPLOAD_CONCURRENCY = 3;
 
 export function UploadForm({
   currentSource,
@@ -43,8 +44,23 @@ export function UploadForm({
       });
       const uploadId = String(initPayload.uploadId);
       const totalChunks = Math.ceil(file.size / CHUNK_BYTES);
+      let showAnalyticsStatus = false;
+      let latestAnalyticsStatus = "Calculando métricas del Excel...";
+      const analyticsPromise = prepareAnalyticsInWorker(file, (message, seconds) => {
+        latestAnalyticsStatus = `${message} ${formatElapsed(seconds)}`.trim();
 
-      for (let index = 0; index < totalChunks; index += 1) {
+        if (showAnalyticsStatus) {
+          setStatus(latestAnalyticsStatus);
+        }
+      });
+      analyticsPromise.catch(() => undefined);
+
+      let excelChunksDone = 0;
+
+      await mapWithConcurrency(
+        Array.from({ length: totalChunks }, (_, index) => index),
+        UPLOAD_CONCURRENCY,
+        async (index) => {
         const start = index * CHUNK_BYTES;
         const chunk = file.slice(start, start + CHUNK_BYTES);
         const payload = await blobToBase64(chunk);
@@ -55,47 +71,45 @@ export function UploadForm({
           payload,
         });
 
-        const nextProgress = Math.round(((index + 1) / totalChunks) * 52);
+          excelChunksDone += 1;
+        const nextProgress = Math.round((excelChunksDone / totalChunks) * 52);
         setProgress(nextProgress);
-        setStatus(`Subiendo Excel a InstantDB: ${index + 1}/${totalChunks} partes...`);
-      }
+        setStatus(`Subiendo Excel a InstantDB: ${excelChunksDone}/${totalChunks} partes...`);
+        },
+      );
 
       setProgress(58);
-      setStatus("Excel subido. Calculando métricas en este navegador...");
+      showAnalyticsStatus = true;
+      setStatus(latestAnalyticsStatus);
       await waitForPaint();
 
-      const [{ buildAnalyticsFromExcelArrayBuffer }, { deflate }] =
-        await Promise.all([import("@/lib/chatAnalytics"), import("pako")]);
-      const analytics = buildAnalyticsFromExcelArrayBuffer(
-        await file.arrayBuffer(),
-        file.name,
-      );
-      const generatedAt = new Date().toISOString();
-      const nextAnalytics = {
-        ...analytics,
-        generatedAt,
-        sourceName: file.name,
-      };
+      const prepared = await analyticsPromise;
 
       setProgress(72);
-      setStatus("Comprimiendo métricas antes de guardarlas...");
+      setStatus("Métricas listas. Guardándolas en InstantDB...");
       await waitForPaint();
 
-      const encoded = bytesToBase64(deflate(JSON.stringify(nextAnalytics)));
-      const analyticsChunks = chunkString(encoded, ANALYTICS_CHUNK_CHARS);
+      const analyticsChunks = chunkString(prepared.encoded, ANALYTICS_CHUNK_CHARS);
 
-      for (let index = 0; index < analyticsChunks.length; index += 1) {
+      let analyticsChunksDone = 0;
+
+      await mapWithConcurrency(
+        Array.from({ length: analyticsChunks.length }, (_, index) => index),
+        UPLOAD_CONCURRENCY,
+        async (index) => {
         await postJson("/api/admin/upload/analytics-chunk", {
           uploadId,
           index,
           payload: analyticsChunks[index],
         });
 
-        setProgress(72 + Math.round(((index + 1) / analyticsChunks.length) * 22));
+          analyticsChunksDone += 1;
+        setProgress(72 + Math.round((analyticsChunksDone / analyticsChunks.length) * 22));
         setStatus(
-          `Guardando métricas en InstantDB: ${index + 1}/${analyticsChunks.length} partes...`,
+          `Guardando métricas en InstantDB: ${analyticsChunksDone}/${analyticsChunks.length} partes...`,
         );
-      }
+        },
+      );
 
       setProgress(96);
       setStatus("Reemplazando la base actual por las métricas nuevas...");
@@ -104,9 +118,9 @@ export function UploadForm({
         uploadId,
         preparedAnalytics: true,
         analyticsChunkCount: analyticsChunks.length,
-        sourceName: file.name,
-        generatedAt,
-        totalMessages: nextAnalytics.totalMessages,
+        sourceName: prepared.sourceName,
+        generatedAt: prepared.generatedAt,
+        totalMessages: prepared.totalMessages,
       });
 
       setProgress(100);
@@ -256,19 +270,99 @@ function chunkString(value: string, size: number) {
   return chunks;
 }
 
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = "";
-  const batchSize = 0x8000;
-
-  for (let index = 0; index < bytes.length; index += batchSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + batchSize));
-  }
-
-  return btoa(binary);
-}
-
 function waitForPaint() {
   return new Promise<void>((resolve) =>
     window.requestAnimationFrame(() => resolve()),
+  );
+}
+
+function prepareAnalyticsInWorker(
+  file: File,
+  onStatus: (message: string, elapsedSeconds: number) => void,
+) {
+  return new Promise<{
+    encoded: string;
+    generatedAt: string;
+    sourceName: string;
+    totalMessages: number;
+  }>(async (resolve, reject) => {
+    const worker = new Worker(new URL("./analytics-worker.ts", import.meta.url), {
+      type: "module",
+    });
+    const startedAt = Date.now();
+    let lastMessage = "Calculando métricas del Excel...";
+    const interval = window.setInterval(() => {
+      onStatus(lastMessage, Math.round((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    worker.onmessage = (event: MessageEvent<Record<string, unknown>>) => {
+      if (event.data.type === "status") {
+        lastMessage = String(event.data.status ?? lastMessage);
+        onStatus(lastMessage, Math.round((Date.now() - startedAt) / 1000));
+        return;
+      }
+
+      window.clearInterval(interval);
+      worker.terminate();
+
+      if (event.data.type === "done") {
+        resolve({
+          encoded: String(event.data.encoded ?? ""),
+          generatedAt: String(event.data.generatedAt ?? new Date().toISOString()),
+          sourceName: String(event.data.sourceName ?? file.name),
+          totalMessages: Number(event.data.totalMessages ?? 0),
+        });
+        return;
+      }
+
+      reject(new Error(String(event.data.error ?? "No se pudieron calcular las métricas.")));
+    };
+    worker.onerror = (error) => {
+      window.clearInterval(interval);
+      worker.terminate();
+      reject(new Error(error.message || "No se pudieron calcular las métricas."));
+    };
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      worker.postMessage({ fileName: file.name, arrayBuffer }, [arrayBuffer]);
+    } catch (error) {
+      window.clearInterval(interval);
+      worker.terminate();
+      reject(error);
+    }
+  });
+}
+
+function formatElapsed(seconds: number) {
+  if (seconds < 2) {
+    return "";
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+
+  return minutes > 0
+    ? `(${minutes}m ${String(rest).padStart(2, "0")}s)`
+    : `(${seconds}s)`;
+}
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+) {
+  let cursor = 0;
+
+  async function runNext() {
+    while (cursor < items.length) {
+      const current = items[cursor];
+      cursor += 1;
+      await worker(current);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => runNext()),
   );
 }

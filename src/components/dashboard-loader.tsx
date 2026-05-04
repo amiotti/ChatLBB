@@ -29,6 +29,7 @@ export function DashboardLoader() {
       try {
         const response = await fetch("/api/analytics", {
           signal: controller.signal,
+          cache: "no-store",
           headers: {
             Accept: "application/json",
           },
@@ -77,7 +78,7 @@ export function DashboardLoader() {
         </h1>
         <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
           {state.status === "loading"
-            ? "Preparando el dashboard. La primera carga puede tardar un momento, despues queda cacheada."
+            ? "Leyendo las métricas actualizadas desde la base de datos."
             : state.error}
         </p>
         <Link
