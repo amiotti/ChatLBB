@@ -2,12 +2,13 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { Lock, UploadCloud } from "lucide-react";
 import { loadAnalytics } from "@/lib/chatAnalytics";
+import { loadAnalyticsFromDb } from "@/lib/instantAnalytics";
 import { UploadForm } from "./upload-form";
 
 export default async function AdminPage() {
   const cookieStore = await cookies();
   const isAdmin = cookieStore.get("chat_admin")?.value === "1";
-  const analytics = loadAnalytics();
+  const analytics = isAdmin ? (await loadAnalyticsFromDb()) ?? loadAnalytics() : null;
 
   return (
     <main className="min-h-screen bg-[#f6f2ea] px-5 py-8 text-[#211f1b]">

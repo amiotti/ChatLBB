@@ -9,9 +9,10 @@ type UploadFormProps = {
   totalMessages: number;
 };
 
-const CHUNK_BYTES = 1_200_000;
-const ANALYTICS_CHUNK_CHARS = 900_000;
+const ANALYTICS_CHUNK_CHARS = 250_000;
 const UPLOAD_CONCURRENCY = 3;
+const REQUEST_TIMEOUT_MS = 45_000;
+const REQUEST_ATTEMPTS = 3;
 
 export function UploadForm({
   currentSource,
@@ -28,86 +29,52 @@ export function UploadForm({
     const file = inputRef.current?.files?.[0];
 
     if (!file) {
-      setStatus("Elegi un archivo Excel.");
+      setStatus("Elegí un archivo Excel.");
       return;
     }
 
     setIsUploading(true);
     setProgress(0);
-    setStatus("Creando carga en InstantDB...");
+    setStatus("Calculando métricas del Excel...");
 
     try {
+      const prepared = await prepareAnalyticsInWorker(file, (message, seconds) => {
+        setStatus(`${message} ${formatElapsed(seconds)}`.trim());
+      });
+
+      setProgress(58);
+      setStatus("Creando registro en InstantDB...");
+
       const initPayload = await postJson("/api/admin/upload/init", {
         fileName: file.name,
         size: file.size,
-        totalChunks: Math.ceil(file.size / CHUNK_BYTES),
+        totalChunks: 0,
       });
       const uploadId = String(initPayload.uploadId);
-      const totalChunks = Math.ceil(file.size / CHUNK_BYTES);
-      let showAnalyticsStatus = false;
-      let latestAnalyticsStatus = "Calculando métricas del Excel...";
-      const analyticsPromise = prepareAnalyticsInWorker(file, (message, seconds) => {
-        latestAnalyticsStatus = `${message} ${formatElapsed(seconds)}`.trim();
-
-        if (showAnalyticsStatus) {
-          setStatus(latestAnalyticsStatus);
-        }
-      });
-      analyticsPromise.catch(() => undefined);
-
-      let excelChunksDone = 0;
-
-      await mapWithConcurrency(
-        Array.from({ length: totalChunks }, (_, index) => index),
-        UPLOAD_CONCURRENCY,
-        async (index) => {
-        const start = index * CHUNK_BYTES;
-        const chunk = file.slice(start, start + CHUNK_BYTES);
-        const payload = await blobToBase64(chunk);
-
-        await postJson("/api/admin/upload/chunk", {
-          uploadId,
-          index,
-          payload,
-        });
-
-          excelChunksDone += 1;
-        const nextProgress = Math.round((excelChunksDone / totalChunks) * 52);
-        setProgress(nextProgress);
-        setStatus(`Subiendo Excel a InstantDB: ${excelChunksDone}/${totalChunks} partes...`);
-        },
-      );
-
-      setProgress(58);
-      showAnalyticsStatus = true;
-      setStatus(latestAnalyticsStatus);
-      await waitForPaint();
-
-      const prepared = await analyticsPromise;
+      const analyticsChunks = chunkString(prepared.encoded, ANALYTICS_CHUNK_CHARS);
+      let analyticsChunksDone = 0;
 
       setProgress(72);
       setStatus("Métricas listas. Guardándolas en InstantDB...");
       await waitForPaint();
 
-      const analyticsChunks = chunkString(prepared.encoded, ANALYTICS_CHUNK_CHARS);
-
-      let analyticsChunksDone = 0;
-
       await mapWithConcurrency(
         Array.from({ length: analyticsChunks.length }, (_, index) => index),
         UPLOAD_CONCURRENCY,
         async (index) => {
-        await postJson("/api/admin/upload/analytics-chunk", {
-          uploadId,
-          index,
-          payload: analyticsChunks[index],
-        });
+          await postJson("/api/admin/upload/analytics-chunk", {
+            uploadId,
+            index,
+            payload: analyticsChunks[index],
+          });
 
           analyticsChunksDone += 1;
-        setProgress(72 + Math.round((analyticsChunksDone / analyticsChunks.length) * 22));
-        setStatus(
-          `Guardando métricas en InstantDB: ${analyticsChunksDone}/${analyticsChunks.length} partes...`,
-        );
+          setProgress(
+            72 + Math.round((analyticsChunksDone / analyticsChunks.length) * 22),
+          );
+          setStatus(
+            `Guardando métricas en InstantDB: ${analyticsChunksDone}/${analyticsChunks.length} partes...`,
+          );
         },
       );
 
@@ -217,47 +184,62 @@ export function UploadForm({
 }
 
 async function postJson(url: string, body: unknown) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const contentType = response.headers.get("content-type") ?? "";
-  const text = await response.text();
-  let payload: { ok?: boolean; error?: string; [key: string]: unknown } = {};
+  let lastError: unknown = null;
 
-  if (contentType.includes("application/json") && text) {
-    payload = JSON.parse(text);
-  } else if (!response.ok) {
-    const preview = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    throw new Error(
-      `La API devolvió ${response.status} ${response.statusText}. ${
-        preview ? preview.slice(0, 180) : "No hubo detalle del servidor."
-      }`,
-    );
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const contentType = response.headers.get("content-type") ?? "";
+      const text = await response.text();
+      let payload: { ok?: boolean; error?: string; [key: string]: unknown } = {};
+
+      if (contentType.includes("application/json") && text) {
+        payload = JSON.parse(text);
+      } else if (!response.ok) {
+        const preview = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
+        throw new Error(
+          `La API devolvió ${response.status} ${response.statusText}. ${
+            preview ? preview.slice(0, 180) : "No hubo detalle del servidor."
+          }`,
+        );
+      }
+
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "No se pudo completar la operación.");
+      }
+
+      return payload;
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < REQUEST_ATTEMPTS) {
+        await sleep(900 * attempt);
+        continue;
+      }
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
 
-  if (!response.ok || !payload.ok) {
-    throw new Error(payload.error ?? "No se pudo completar la operación.");
-  }
+  const message =
+    lastError instanceof Error
+      ? lastError.name === "AbortError"
+        ? "La API tardó demasiado y se canceló el intento."
+        : lastError.message
+      : "No se pudo completar la operación.";
 
-  return payload;
-}
-
-function blobToBase64(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      const result = String(reader.result ?? "");
-      resolve(result.split(",")[1] ?? "");
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
+  throw new Error(`${message} Se intentó ${REQUEST_ATTEMPTS} veces.`);
 }
 
 function chunkString(value: string, size: number) {
@@ -345,6 +327,10 @@ function formatElapsed(seconds: number) {
   return minutes > 0
     ? `(${minutes}m ${String(rest).padStart(2, "0")}s)`
     : `(${seconds}s)`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function mapWithConcurrency<T>(

@@ -19,7 +19,7 @@ export async function POST(request: Request) {
       !/\.(xlsx|xls)$/i.test(fileName) ||
       !size ||
       !Number.isFinite(totalChunks) ||
-      totalChunks <= 0
+      totalChunks < 0
     ) {
       return NextResponse.json(
         { ok: false, error: "Archivo Excel invalido" },
