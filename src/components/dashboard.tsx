@@ -123,9 +123,9 @@ export function Dashboard({ analytics }: DashboardProps) {
   );
   const selectedTopic = useMemo(() => topicEvolution(scoped.topics, topic), [scoped.topics, topic]);
   const memberStats = useMemo(() => memberStatsFromMonths(scoped.months, scoped.days, scoped.dayHours), [scoped.dayHours, scoped.days, scoped.months]);
-  const yearOverYearGrowth = useMemo(
-    () => memberYearGrowth(scoped.months, analytics.months, year),
-    [analytics.months, scoped.months, year],
+  const quarterGrowth = useMemo(
+    () => memberQuarterGrowth(scoped.months, analytics.months, year, month),
+    [analytics.months, month, scoped.months, year],
   );
   const generalStats = useMemo(() => scopedGeneralStats(scoped.days, totals, dateFrom, dateTo), [dateFrom, dateTo, scoped.days, totals]);
   const executive = useMemo(() => executiveSummary(analytics, totals, ranking, hourData, wordCloud, emojis, generalStats), [analytics, emojis, generalStats, hourData, ranking, totals, wordCloud]);
@@ -410,13 +410,17 @@ export function Dashboard({ analytics }: DashboardProps) {
         <div className="grid gap-6 xl:grid-cols-[1fr_0.75fr_0.75fr]">
           <Panel title="Evolución anual por participante" subtitle="Top integrantes en cada año">
             <ChartBox>
-              <BarChart data={yearMemberLeaders(scoped.months)} margin={{ bottom: 18 }}>
+              <BarChart data={yearMemberLeaders(scoped.months)} margin={{ bottom: 8 }}>
                 <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="4 4" />
-                <XAxis dataKey="label" height={58} interval={0} tick={<YearMemberTick />} />
+                <XAxis dataKey="yearLabel" height={34} interval={0} tick={chartTick} />
                 <YAxis tick={chartTick} />
                 <Tooltip
                   contentStyle={tooltipStyle}
-                  labelFormatter={(label) => String(label).replace("|", " - ")}
+                  labelFormatter={(label) => `Año ${label}`}
+                  formatter={(value, _name, item) => [
+                    Number(value).toLocaleString("es-AR"),
+                    String(item.payload?.member ?? "Mensajes"),
+                  ]}
                 />
                 <Bar dataKey="messages" fill="var(--beer)" radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -425,10 +429,10 @@ export function Dashboard({ analytics }: DashboardProps) {
           <Panel title="Más activo cada mes" subtitle="Líderes mensuales recientes">
             <RankList rows={monthlyLeaders(scoped.months).slice(-12).reverse().map((row) => ({ label: `${row.label}: ${row.member}`, value: row.messages }))} />
           </Panel>
-          <Panel title="Mayor crecimiento anual" subtitle="Aumento contra el año anterior">
+          <Panel title="Mayor crecimiento trimestral" subtitle="Aumento contra el trimestre anterior">
             <RankList
-              rows={yearOverYearGrowth.slice(0, 8).map((row) => ({
-                label: `${row.member} (${row.year})`,
+              rows={quarterGrowth.slice(0, 8).map((row) => ({
+                label: `${row.member} (${quarterLabel(row.year, row.quarter)})`,
                 value: row.increase,
                 share: row.percent,
               }))}
@@ -730,45 +734,6 @@ function ChartBox({ children, height = "h-80" }: { children: React.ReactElement;
   );
 }
 
-function YearMemberTick({
-  x,
-  y,
-  payload,
-}: {
-  x?: number;
-  y?: number;
-  payload?: { value?: string };
-}) {
-  const [year = "", member = ""] = String(payload?.value ?? "").split("|");
-  const shortMember = member.length > 14 ? `${member.slice(0, 13)}...` : member;
-
-  return (
-    <g transform={`translate(${x ?? 0},${y ?? 0})`}>
-      <text
-        x={0}
-        y={0}
-        dy={12}
-        textAnchor="middle"
-        fill="var(--chart-text)"
-        fontSize={11}
-        fontWeight={800}
-      >
-        {year}
-      </text>
-      <text
-        x={0}
-        y={0}
-        dy={28}
-        textAnchor="middle"
-        fill="var(--muted)"
-        fontSize={10}
-      >
-        {shortMember}
-      </text>
-    </g>
-  );
-}
-
 function MiniMetric({ label, value, accent = "var(--beer)" }: { label: string; value: string; accent?: string }) {
   return (
     <div className="min-w-0 rounded-xl border border-[var(--line)]/15 bg-[var(--foreground)]/[0.06] p-3">
@@ -953,24 +918,41 @@ function rankingByMember(rows: MetricPoint[]) {
   return [...map.entries()].map(([name, totals]) => ({ member: name, ...totals, share: (totals.messages / totalMessages) * 100 })).sort((a, b) => b.messages - a.messages);
 }
 
-function memberYearGrowth(
+function memberQuarterGrowth(
   scopedRows: MetricPoint[],
   allRows: MetricPoint[],
   selectedYear: string,
+  selectedMonth: string,
 ) {
-  const byMemberYear = new Map<string, number>();
+  const byMemberPeriod = new Map<string, number>();
   const scopedMembers = new Set(scopedRows.map((row) => row.member));
-  const scopedMonths = new Set(scopedRows.map((row) => row.month));
-  const years = [
-    ...new Set(
-      (selectedYear
-        ? [Number(selectedYear)]
-        : scopedRows.map((row) => row.year)
-      ).filter(Number.isFinite),
-    ),
-  ].sort((a, b) => b - a);
+  const selectedMonthNumber = Number(selectedMonth);
+  const candidatePeriods = [
+    ...new Map(
+      scopedRows
+        .filter((row) => {
+          if (selectedYear && row.year !== Number(selectedYear)) {
+            return false;
+          }
 
-  if (scopedRows.length === 0 || years.length === 0) {
+          if (
+            selectedMonth &&
+            quarterFromMonth(row.month) !== quarterFromMonth(selectedMonthNumber)
+          ) {
+            return false;
+          }
+
+          return true;
+        })
+        .map((row) => {
+          const quarter = quarterFromMonth(row.month);
+
+          return [`${row.year}|${quarter}`, { year: row.year, quarter }];
+        }),
+    ).values(),
+  ].sort((a, b) => periodIndex(b.year, b.quarter) - periodIndex(a.year, a.quarter));
+
+  if (scopedRows.length === 0 || candidatePeriods.length === 0) {
     return [];
   }
 
@@ -979,42 +961,39 @@ function memberYearGrowth(
       continue;
     }
 
-    if (scopedMonths.size > 0 && !scopedMonths.has(row.month)) {
-      continue;
-    }
-
-    const key = `${row.member}|${row.year}`;
-    byMemberYear.set(key, (byMemberYear.get(key) ?? 0) + row.messages);
+    const quarter = quarterFromMonth(row.month);
+    const key = `${row.member}|${row.year}|${quarter}`;
+    byMemberPeriod.set(key, (byMemberPeriod.get(key) ?? 0) + row.messages);
   }
 
-  for (const currentYear of years) {
-    const previousYear = currentYear - 1;
-    const currentRows = [...byMemberYear.entries()].filter(([key]) =>
-      key.endsWith(`|${currentYear}`),
+  for (const { year: currentYear, quarter: currentQuarter } of candidatePeriods) {
+    const previous = previousQuarter(currentYear, currentQuarter);
+    const currentRows = [...byMemberPeriod.entries()].filter(([key]) =>
+      key.endsWith(`|${currentYear}|${currentQuarter}`),
     );
     const growth = currentRows.flatMap(([key, current]) => {
       const [member] = key.split("|");
-      const previous = byMemberYear.get(`${member}|${previousYear}`) ?? 0;
+      const previousMessages =
+        byMemberPeriod.get(`${member}|${previous.year}|${previous.quarter}`) ?? 0;
 
-      if (previous <= 0 || current <= previous) {
+      if (current <= previousMessages) {
         return [];
       }
 
-      const increase = current - previous;
+      const increase = current - previousMessages;
 
       return [
         {
           member,
           year: currentYear,
-          current,
-          previous,
+          quarter: currentQuarter,
           increase,
-          percent: (increase / previous) * 100,
+          percent: previousMessages > 0 ? (increase / previousMessages) * 100 : 100,
         },
       ];
     });
 
-    if (growth.length > 0 || selectedYear) {
+    if (growth.length > 0 || selectedYear || selectedMonth) {
       return growth.sort((a, b) => b.percent - a.percent || b.increase - a.increase);
     }
   }
@@ -1381,8 +1360,9 @@ function yearMemberLeaders(rows: MetricPoint[]) {
   return [...byYear.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([year, row]) => ({
-      label: `${year}|${row.member}`,
+      yearLabel: String(year),
       name: `${year} - ${row.member}`,
+      member: row.member,
       messages: row.messages,
     }));
 }
@@ -1424,6 +1404,24 @@ function executiveSummary(
 
 function monthKey(row: { year: number; month: number }) {
   return `${row.year}-${String(row.month).padStart(2, "0")}`;
+}
+
+function quarterFromMonth(month: number) {
+  return Math.max(1, Math.ceil(month / 3));
+}
+
+function previousQuarter(year: number, quarter: number) {
+  return quarter > 1
+    ? { year, quarter: quarter - 1 }
+    : { year: year - 1, quarter: 4 };
+}
+
+function periodIndex(year: number, quarter: number) {
+  return year * 4 + quarter;
+}
+
+function quarterLabel(year: number, quarter: number) {
+  return `T${quarter} ${year}`;
 }
 
 function monthLabelFromKey(key: string) {
