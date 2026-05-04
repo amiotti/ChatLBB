@@ -189,10 +189,7 @@ export function Dashboard({ analytics }: DashboardProps) {
         <div className="fade-up mx-auto grid w-full max-w-7xl gap-8 px-4 py-7 sm:px-6 lg:grid-cols-[1fr_370px] lg:py-12">
           <div className="flex flex-col justify-between gap-8">
             <nav className="flex items-center justify-between gap-4">
-              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--beer)]/30 bg-[var(--beer)]/10 px-3 py-2 text-sm font-bold text-[var(--beer)]">
-                <MessageCircle size={17} />
-                Chat de amigos
-              </div>
+              <span />
               <div className="flex items-center gap-2">
                 <button
                   type="button"
