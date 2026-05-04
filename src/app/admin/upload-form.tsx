@@ -60,18 +60,15 @@ export function UploadForm({
       }
 
       setProgress(85);
-      setStatus("Excel subido. Procesando metricas desde la BD... puede tardar unos minutos.");
+      setStatus("Excel subido. Procesando métricas desde la BD... puede tardar unos minutos.");
 
       const completePayload = await postJson("/api/admin/upload/complete", {
         uploadId,
       });
-      const finalPayload = completePayload.processing
-        ? await waitForProcessing(uploadId, setProgress, setStatus)
-        : completePayload;
 
       setProgress(100);
       setStatus(
-        `Listo: ${Number(finalPayload.totalMessages).toLocaleString("es-AR")} mensajes procesados.`,
+        `Listo: ${Number(completePayload.totalMessages).toLocaleString("es-AR")} mensajes procesados.`,
       );
       window.setTimeout(() => window.location.reload(), 1000);
     } catch (error) {
@@ -191,50 +188,6 @@ async function postJson(url: string, body: unknown) {
   }
 
   return payload;
-}
-
-async function waitForProcessing(
-  uploadId: string,
-  setProgress: (value: number) => void,
-  setStatus: (value: string) => void,
-) {
-  const startedAt = Date.now();
-  let checks = 0;
-
-  while (Date.now() - startedAt < 10 * 60 * 1000) {
-    await sleep(3000);
-    checks += 1;
-
-    const payload = await postJson("/api/admin/upload/status", { uploadId });
-    const status = String(payload.status ?? "");
-
-    if (status === "current") {
-      return payload;
-    }
-
-    if (status === "failed") {
-      throw new Error(String(payload.error ?? "No se pudo procesar el Excel."));
-    }
-
-    const nextProgress = Math.min(98, 85 + checks);
-    const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
-    const minutes = Math.floor(elapsedSeconds / 60);
-    const seconds = elapsedSeconds % 60;
-
-    const elapsed =
-      minutes > 0
-        ? `${minutes}m ${String(seconds).padStart(2, "0")}s`
-        : `${seconds}s`;
-
-    setProgress(nextProgress);
-    setStatus(`Procesando metricas en segundo plano... ${elapsed}`);
-  }
-
-  throw new Error("El procesamiento sigue tardando demasiado. Volve a revisar el estado en unos minutos.");
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function blobToBase64(blob: Blob) {
