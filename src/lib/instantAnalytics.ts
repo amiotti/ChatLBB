@@ -75,9 +75,29 @@ export async function loadAnalyticsFromDb() {
 }
 
 export async function saveAnalyticsToDb(analytics: ChatAnalytics) {
-  const db = getInstantDb();
   const json = JSON.stringify(analytics);
   const encoded = Buffer.from(deflate(json)).toString("base64");
+  await saveEncodedAnalyticsToDb({
+    encoded,
+    sourceName: analytics.sourceName,
+    generatedAt: analytics.generatedAt,
+    totalMessages: analytics.totalMessages,
+  });
+  analyticsCache = analytics;
+}
+
+export async function saveEncodedAnalyticsToDb({
+  encoded,
+  sourceName,
+  generatedAt,
+  totalMessages,
+}: {
+  encoded: string;
+  sourceName: string;
+  generatedAt: string;
+  totalMessages: number;
+}) {
+  const db = getInstantDb();
   const chunks = encoded.match(new RegExp(`.{1,${CHUNK_SIZE}}`, "g")) ?? [];
   const existing = await db.query({
     analyticsSnapshots: {
@@ -104,9 +124,9 @@ export async function saveAnalyticsToDb(analytics: ChatAnalytics) {
     ),
     db.tx.analyticsSnapshots[id()].update({
       key: SNAPSHOT_KEY,
-      sourceName: analytics.sourceName,
-      generatedAt: analytics.generatedAt,
-      totalMessages: analytics.totalMessages,
+      sourceName,
+      generatedAt,
+      totalMessages,
       chunkCount: chunks.length,
       compressedBytes: encoded.length,
     }),
@@ -120,7 +140,7 @@ export async function saveAnalyticsToDb(analytics: ChatAnalytics) {
   ];
 
   await transactInBatches(db, txs);
-  analyticsCache = analytics;
+  analyticsCache = null;
 }
 
 export async function initExcelUpload(
@@ -153,6 +173,23 @@ export async function saveExcelUploadChunk(
 
   await db.transact(
     db.tx.excelUploadChunks[id()].update({
+      uploadId,
+      index,
+      payload,
+      receivedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+export async function saveAnalyticsUploadChunk(
+  uploadId: string,
+  index: number,
+  payload: string,
+) {
+  const db = getInstantDb();
+
+  await db.transact(
+    db.tx.analyticsUploadChunks[id()].update({
       uploadId,
       index,
       payload,
@@ -274,6 +311,52 @@ export async function loadExcelUploadBuffer(uploadId: string) {
   };
 }
 
+export async function loadEncodedAnalyticsUpload(
+  uploadId: string,
+  expectedChunks: number,
+) {
+  const db = getInstantDb();
+  const data = await db.query({
+    analyticsUploadChunks: {
+      $: {
+        where: {
+          uploadId,
+        },
+      },
+    },
+  });
+  const chunks = data.analyticsUploadChunks ?? [];
+  const chunkMap = new Map<number, string>();
+
+  for (const chunk of chunks.sort((a, b) =>
+    String(a.receivedAt ?? "").localeCompare(String(b.receivedAt ?? "")),
+  )) {
+    const index = Number(chunk.index);
+
+    if (Number.isFinite(index)) {
+      chunkMap.set(index, String(chunk.payload));
+    }
+  }
+
+  const missingIndexes: number[] = [];
+
+  for (let index = 0; index < expectedChunks; index += 1) {
+    if (!chunkMap.has(index)) {
+      missingIndexes.push(index);
+    }
+  }
+
+  if (missingIndexes.length > 0) {
+    throw new Error(
+      `Faltan ${missingIndexes.length} partes de las metricas. Volve a intentar la carga.`,
+    );
+  }
+
+  return Array.from({ length: expectedChunks }, (_, index) =>
+    chunkMap.get(index) ?? "",
+  ).join("");
+}
+
 export async function markExcelUploadAsCurrent(uploadId: string) {
   const db = getInstantDb();
   const current = await db.query({
@@ -334,6 +417,24 @@ export async function deleteExcelUpload(uploadId: string) {
       db.tx.excelUploads[upload.id].delete(),
     ),
   ];
+
+  await transactInBatches(db, txs);
+}
+
+export async function deleteAnalyticsUploadChunks(uploadId: string) {
+  const db = getInstantDb();
+  const data = await db.query({
+    analyticsUploadChunks: {
+      $: {
+        where: {
+          uploadId,
+        },
+      },
+    },
+  });
+  const txs = (data.analyticsUploadChunks ?? []).map((chunk) =>
+    db.tx.analyticsUploadChunks[chunk.id].delete(),
+  );
 
   await transactInBatches(db, txs);
 }

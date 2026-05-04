@@ -10,6 +10,7 @@ type UploadFormProps = {
 };
 
 const CHUNK_BYTES = 600_000;
+const ANALYTICS_CHUNK_CHARS = 250_000;
 
 export function UploadForm({
   currentSource,
@@ -54,16 +55,58 @@ export function UploadForm({
           payload,
         });
 
-        const nextProgress = Math.round(((index + 1) / totalChunks) * 80);
+        const nextProgress = Math.round(((index + 1) / totalChunks) * 52);
         setProgress(nextProgress);
         setStatus(`Subiendo Excel a InstantDB: ${index + 1}/${totalChunks} partes...`);
       }
 
-      setProgress(85);
-      setStatus("Excel subido. Procesando métricas desde la BD... puede tardar unos minutos.");
+      setProgress(58);
+      setStatus("Excel subido. Calculando métricas en este navegador...");
+      await waitForPaint();
+
+      const [{ buildAnalyticsFromExcelArrayBuffer }, { deflate }] =
+        await Promise.all([import("@/lib/chatAnalytics"), import("pako")]);
+      const analytics = buildAnalyticsFromExcelArrayBuffer(
+        await file.arrayBuffer(),
+        file.name,
+      );
+      const generatedAt = new Date().toISOString();
+      const nextAnalytics = {
+        ...analytics,
+        generatedAt,
+        sourceName: file.name,
+      };
+
+      setProgress(72);
+      setStatus("Comprimiendo métricas antes de guardarlas...");
+      await waitForPaint();
+
+      const encoded = bytesToBase64(deflate(JSON.stringify(nextAnalytics)));
+      const analyticsChunks = chunkString(encoded, ANALYTICS_CHUNK_CHARS);
+
+      for (let index = 0; index < analyticsChunks.length; index += 1) {
+        await postJson("/api/admin/upload/analytics-chunk", {
+          uploadId,
+          index,
+          payload: analyticsChunks[index],
+        });
+
+        setProgress(72 + Math.round(((index + 1) / analyticsChunks.length) * 22));
+        setStatus(
+          `Guardando métricas en InstantDB: ${index + 1}/${analyticsChunks.length} partes...`,
+        );
+      }
+
+      setProgress(96);
+      setStatus("Reemplazando la base actual por las métricas nuevas...");
 
       const completePayload = await postJson("/api/admin/upload/complete", {
         uploadId,
+        preparedAnalytics: true,
+        analyticsChunkCount: analyticsChunks.length,
+        sourceName: file.name,
+        generatedAt,
+        totalMessages: nextAnalytics.totalMessages,
       });
 
       setProgress(100);
@@ -201,4 +244,31 @@ function blobToBase64(blob: Blob) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+function chunkString(value: string, size: number) {
+  const chunks: string[] = [];
+
+  for (let index = 0; index < value.length; index += size) {
+    chunks.push(value.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  const batchSize = 0x8000;
+
+  for (let index = 0; index < bytes.length; index += batchSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + batchSize));
+  }
+
+  return btoa(binary);
+}
+
+function waitForPaint() {
+  return new Promise<void>((resolve) =>
+    window.requestAnimationFrame(() => resolve()),
+  );
 }

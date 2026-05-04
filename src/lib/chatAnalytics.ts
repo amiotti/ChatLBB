@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import * as XLSX from "xlsx";
 
 const XLSX_MODULE = XLSX as unknown as {
@@ -180,9 +178,13 @@ export type ChatAnalytics = {
   notableMessages: NotableMessage[];
 };
 
-const DATA_DIR = path.join(process.cwd(), "data");
-export const EXCEL_PATH = path.join(DATA_DIR, "chat-limpio.xlsx");
-export const ANALYTICS_PATH = path.join(DATA_DIR, "analytics.json");
+const serverRequire =
+  typeof window === "undefined" && typeof require !== "undefined"
+    ? require
+    : null;
+const DATA_DIR = "data";
+export const EXCEL_PATH = `${DATA_DIR}/chat-limpio.xlsx`;
+export const ANALYTICS_PATH = `${DATA_DIR}/analytics.json`;
 
 const STOP_WORDS = new Set([
   "a",
@@ -334,6 +336,8 @@ export function monthLabel(month: number) {
 }
 
 export function loadAnalytics(): ChatAnalytics | null {
+  const fs = getServerFs();
+
   if (!fs.existsSync(ANALYTICS_PATH)) {
     return null;
   }
@@ -342,6 +346,8 @@ export function loadAnalytics(): ChatAnalytics | null {
 }
 
 export function saveAnalytics(analytics: ChatAnalytics) {
+  const fs = getServerFs();
+
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(ANALYTICS_PATH, JSON.stringify(analytics));
 }
@@ -365,7 +371,7 @@ export function buildAnalyticsFromExcel(filePath: string): ChatAnalytics {
     dense: true,
   });
 
-  return buildAnalyticsFromWorkbook(workbook, path.basename(filePath));
+  return buildAnalyticsFromWorkbook(workbook, filePath.split(/[\\/]/).pop() ?? filePath);
 }
 
 export function buildAnalyticsFromExcelBuffer(
@@ -380,6 +386,28 @@ export function buildAnalyticsFromExcelBuffer(
   });
 
   return buildAnalyticsFromWorkbook(workbook, sourceName);
+}
+
+export function buildAnalyticsFromExcelArrayBuffer(
+  arrayBuffer: ArrayBuffer,
+  sourceName: string,
+): ChatAnalytics {
+  const workbook = XLSX_LIB.read(arrayBuffer, {
+    cellDates: true,
+    raw: false,
+    dense: true,
+    type: "array",
+  });
+
+  return buildAnalyticsFromWorkbook(workbook, sourceName);
+}
+
+function getServerFs() {
+  if (!serverRequire) {
+    throw new Error("El acceso a archivos locales solo esta disponible en el servidor.");
+  }
+
+  return serverRequire("node:fs") as typeof import("node:fs");
 }
 
 function buildAnalyticsFromWorkbook(

@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/adminAuth";
 import { buildAnalyticsFromExcelBuffer } from "@/lib/chatAnalytics";
 import {
+  deleteAnalyticsUploadChunks,
+  loadEncodedAnalyticsUpload,
   loadExcelUploadBuffer,
   markExcelUploadAsCurrent,
+  saveEncodedAnalyticsToDb,
   saveAnalyticsToDb,
   updateExcelUploadStatus,
 } from "@/lib/instantAnalytics";
@@ -22,6 +25,11 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     uploadId = String(body.uploadId ?? "");
+    const analyticsChunkCount = Number(body.analyticsChunkCount ?? 0);
+    const preparedAnalytics =
+      body.preparedAnalytics === true &&
+      Number.isFinite(analyticsChunkCount) &&
+      analyticsChunkCount > 0;
 
     if (!uploadId) {
       return NextResponse.json(
@@ -37,6 +45,36 @@ export async function POST(request: Request) {
       elapsedMs: 0,
       error: "",
     });
+
+    if (preparedAnalytics) {
+      const sourceName = String(body.sourceName ?? "chat-limpio.xlsx");
+      const generatedAt = String(body.generatedAt ?? new Date().toISOString());
+      const totalMessages = Number(body.totalMessages ?? 0);
+      const encoded = await loadEncodedAnalyticsUpload(uploadId, analyticsChunkCount);
+
+      await saveEncodedAnalyticsToDb({
+        encoded,
+        sourceName,
+        generatedAt,
+        totalMessages,
+      });
+      await markExcelUploadAsCurrent(uploadId);
+      await deleteAnalyticsUploadChunks(uploadId);
+      await updateExcelUploadStatus(uploadId, {
+        status: "current",
+        totalMessages,
+        completedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+        error: "",
+      });
+
+      return NextResponse.json({
+        ok: true,
+        processing: false,
+        totalMessages,
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
 
     const { fileName, buffer } = await loadExcelUploadBuffer(uploadId);
     const analytics = buildAnalyticsFromExcelBuffer(buffer, fileName);
