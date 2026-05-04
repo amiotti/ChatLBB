@@ -123,7 +123,10 @@ export function Dashboard({ analytics }: DashboardProps) {
   );
   const selectedTopic = useMemo(() => topicEvolution(scoped.topics, topic), [scoped.topics, topic]);
   const memberStats = useMemo(() => memberStatsFromMonths(scoped.months, scoped.days, scoped.dayHours), [scoped.dayHours, scoped.days, scoped.months]);
-  const recentGrowth = useMemo(() => memberRecentGrowth(scoped.days), [scoped.days]);
+  const quarterGrowth = useMemo(
+    () => memberLastMonthQuarterGrowth(scoped.months),
+    [scoped.months],
+  );
   const generalStats = useMemo(() => scopedGeneralStats(scoped.days, totals, dateFrom, dateTo), [dateFrom, dateTo, scoped.days, totals]);
   const executive = useMemo(() => executiveSummary(analytics, totals, ranking, hourData, wordCloud, emojis, generalStats), [analytics, emojis, generalStats, hourData, ranking, totals, wordCloud]);
   const nightRanking = rankingMetric(memberStats, "nightMessages");
@@ -426,14 +429,11 @@ export function Dashboard({ analytics }: DashboardProps) {
           <Panel title="Más activo cada mes" subtitle="Líderes mensuales recientes">
             <RankList rows={monthlyLeaders(scoped.months).slice(-12).reverse().map((row) => ({ label: `${row.label}: ${row.member}`, value: row.messages }))} />
           </Panel>
-          <Panel title="Mayor crecimiento reciente" subtitle="Últimos 90 días de cada integrante vs. 90 previos">
-            <RankList
-              rows={recentGrowth.slice(0, 5).map((row) => ({
-                label: `${row.member} (hasta ${formatShortDate(row.lastDate)})`,
-                value: row.increase,
-                share: row.percent,
-              }))}
-            />
+          <Panel
+            title="Crecimiento trimestral"
+            subtitle={quarterGrowth[0] ? `${quarterGrowth[0].currentLabel} vs. ${quarterGrowth[0].previousLabel}` : "Integrantes activos en el último mes"}
+          >
+            <GrowthList rows={quarterGrowth} />
           </Panel>
         </div>
 
@@ -765,6 +765,68 @@ function RankList({ rows, suffix = "" }: { rows: Array<{ label: string; value: n
   );
 }
 
+function GrowthList({
+  rows,
+}: {
+  rows: Array<{
+    member: string;
+    current: number;
+    previous: number;
+    increase: number;
+    percent: number;
+  }>;
+}) {
+  if (rows.length === 0) {
+    return <p className="text-sm font-semibold text-[var(--muted)]">Sin actividad en el último mes del filtro.</p>;
+  }
+
+  return (
+    <div className="max-h-80 overflow-y-auto pr-1">
+      <div className="flex min-w-0 flex-col gap-3">
+        {rows.map((row, index) => {
+          const isPositive = row.increase >= 0;
+
+          return (
+            <article
+              key={row.member}
+              className="rounded-xl border border-[var(--line)]/15 bg-[var(--foreground)]/[0.06] p-3"
+            >
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="flex min-w-0 items-center gap-2 font-bold text-[var(--foreground)]">
+                    {index === 0 ? <Crown size={15} className="shrink-0 text-[var(--beer)]" /> : null}
+                    <span className="truncate">{row.member}</span>
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    {row.current.toLocaleString("es-AR")} vs. {row.previous.toLocaleString("es-AR")} mensajes
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-black ${
+                    isPositive
+                      ? "bg-[var(--mint)]/18 text-[var(--mint)]"
+                      : "bg-[var(--amber)]/15 text-[var(--amber)]"
+                  }`}
+                >
+                  {isPositive ? "+" : ""}
+                  {row.increase.toLocaleString("es-AR")}
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-bold text-[var(--muted)]">
+                <span>Actual: {row.current.toLocaleString("es-AR")}</span>
+                <span className="text-right">
+                  {isPositive ? "+" : ""}
+                  {formatNumber(row.percent, 1)}%
+                </span>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function HeatRow({ row }: { row: { day: string; hours: Array<{ hour: number; messages: number; intensity: number }> } }) {
   return (
     <>
@@ -915,83 +977,60 @@ function rankingByMember(rows: MetricPoint[]) {
   return [...map.entries()].map(([name, totals]) => ({ member: name, ...totals, share: (totals.messages / totalMessages) * 100 })).sort((a, b) => b.messages - a.messages);
 }
 
-function memberRecentGrowth(rows: DayPoint[]) {
-  const byMember = new Map<string, DayPoint[]>();
-  const windowDays = 90;
-
-  for (const row of rows) {
-    const current = byMember.get(row.member) ?? [];
-    current.push(row);
-    byMember.set(row.member, current);
-  }
-
-  if (byMember.size === 0) {
+function memberLastMonthQuarterGrowth(rows: MetricPoint[]) {
+  if (rows.length === 0) {
     return [];
   }
 
-  const growth = [...byMember.entries()].flatMap(([member, memberRows]) => {
-    const lastDate = memberRows.reduce(
-      (latest, row) => (row.date > latest ? row.date : latest),
-      "",
-    );
-    const currentStart = addDays(lastDate, -(windowDays - 1));
-    const previousEnd = addDays(currentStart, -1);
-    const previousStart = addDays(previousEnd, -(windowDays - 1));
-    let currentMessages = 0;
-    let previousMessages = 0;
+  const latestMonthKey = rows
+    .map((row) => monthKey(row))
+    .sort((a, b) => b.localeCompare(a))[0];
+  const [latestYearText, latestMonthText] = latestMonthKey.split("-");
+  const latestYear = Number(latestYearText);
+  const latestMonth = Number(latestMonthText);
+  const currentQuarter = quarterFromMonth(latestMonth);
+  const previous = previousQuarter(latestYear, currentQuarter);
+  const activeMembers = new Set(
+    rows
+      .filter((row) => monthKey(row) === latestMonthKey && row.messages > 0)
+      .map((row) => row.member),
+  );
+  const totals = new Map<string, { current: number; previous: number }>();
 
-    for (const row of memberRows) {
-      if (row.date >= currentStart && row.date <= lastDate) {
-        currentMessages += row.messages;
-      } else if (row.date >= previousStart && row.date <= previousEnd) {
-        previousMessages += row.messages;
-      }
+  for (const row of rows) {
+    if (!activeMembers.has(row.member)) {
+      continue;
     }
 
-    if (currentMessages <= previousMessages) {
-      return [];
+    const quarter = quarterFromMonth(row.month);
+    const current = totals.get(row.member) ?? { current: 0, previous: 0 };
+
+    if (row.year === latestYear && quarter === currentQuarter) {
+      current.current += row.messages;
     }
 
-    const increase = currentMessages - previousMessages;
+    if (row.year === previous.year && quarter === previous.quarter) {
+      current.previous += row.messages;
+    }
 
-    return [
-      {
-        member,
-        lastDate,
-        currentMessages,
-        previousMessages,
-        increase,
-        percent: previousMessages > 0 ? (increase / previousMessages) * 100 : 100,
-      },
-    ];
-  });
-
-  if (growth.length > 0) {
-    return growth.sort((a, b) => b.increase - a.increase || b.percent - a.percent);
+    totals.set(row.member, current);
   }
 
-  return [...byMember.entries()]
-    .map(([member, memberRows]) => {
-      const lastDate = memberRows.reduce(
-        (latest, row) => (row.date > latest ? row.date : latest),
-        "",
-      );
-      const currentStart = addDays(lastDate, -(windowDays - 1));
-      const currentMessages = memberRows
-        .filter((row) => row.date >= currentStart && row.date <= lastDate)
-        .reduce((sum, row) => sum + row.messages, 0);
+  return [...totals.entries()]
+    .map(([member, values]) => {
+      const increase = values.current - values.previous;
 
       return {
         member,
-        lastDate,
-        currentMessages,
-        previousMessages: 0,
-        increase: currentMessages,
-        percent: 100,
+        current: values.current,
+        previous: values.previous,
+        increase,
+        percent: values.previous > 0 ? (increase / values.previous) * 100 : 100,
+        currentLabel: quarterLabel(latestYear, currentQuarter),
+        previousLabel: quarterLabel(previous.year, previous.quarter),
       };
     })
-    .filter((row) => row.currentMessages > 0)
-    .sort((a, b) => b.currentMessages - a.currentMessages);
+    .sort((a, b) => b.increase - a.increase || b.percent - a.percent);
 }
 
 function timelineData(rows: MetricPoint[]) {
@@ -1397,6 +1436,20 @@ function executiveSummary(
 
 function monthKey(row: { year: number; month: number }) {
   return `${row.year}-${String(row.month).padStart(2, "0")}`;
+}
+
+function quarterFromMonth(month: number) {
+  return Math.max(1, Math.ceil(month / 3));
+}
+
+function previousQuarter(year: number, quarter: number) {
+  return quarter > 1
+    ? { year, quarter: quarter - 1 }
+    : { year: year - 1, quarter: 4 };
+}
+
+function quarterLabel(year: number, quarter: number) {
+  return `T${quarter} ${year}`;
 }
 
 function monthLabelFromKey(key: string) {
