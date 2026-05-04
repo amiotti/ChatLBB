@@ -782,15 +782,15 @@ function RankList({ rows, suffix = "" }: { rows: Array<{ label: string; value: n
   const max = Math.max(...rows.map((row) => row.value), 1);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-w-0 flex-col gap-3 overflow-hidden">
       {rows.map((item, index) => (
-        <div key={`${item.label}-${index}`} className="grid gap-1">
-          <div className="flex items-center justify-between gap-3 text-sm">
+        <div key={`${item.label}-${index}`} className="grid min-w-0 gap-1 overflow-hidden">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(72px,auto)] items-center gap-3 text-sm">
             <span className="flex min-w-0 items-center gap-2 font-bold">
               {index === 0 ? <Crown size={15} className="shrink-0 text-[var(--beer)]" /> : null}
               <span className="truncate">{item.label}</span>
             </span>
-            <span className="shrink-0 font-mono text-xs text-[var(--muted)]">
+            <span className="min-w-0 truncate text-right font-mono text-xs text-[var(--muted)]">
               {item.value.toLocaleString("es-AR")}{suffix}{item.share ? ` · ${formatNumber(item.share, 1)}%` : ""}
             </span>
           </div>
